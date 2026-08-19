@@ -83,6 +83,37 @@ export interface PartyOutPaginate {
   items: Party[]
 }
 
+export type PurchaseStatus = 'DRAFT' | 'RECEIVED' | 'CANCELLED'
+
+export interface PurchaseLine {
+  id: string
+  purchase_id: string
+  variant_id: string
+  qty: number
+  unit_cost: number
+  line_total: number
+}
+
+export interface Purchase {
+  id: string
+  supplier_id: number
+  status: PurchaseStatus
+  purchase_date: string
+  reference_no?: string
+  notes?: string
+  created_by?: number
+  created_at: string
+  updated_at: string
+  lines: PurchaseLine[]
+}
+
+export interface PurchaseOutPaginate {
+  total: number
+  page: number
+  size: number
+  items: Purchase[]
+}
+
 export interface ApiError {
   detail: string | { msg: string }[]
 }

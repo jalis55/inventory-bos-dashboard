@@ -7,6 +7,7 @@ import {
   Tags,
   PackageSearch,
   Handshake,
+  ShoppingCart,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 
@@ -24,5 +25,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Brands', to: '/brands', icon: Building2, permission: 'inventory:view' },
   { label: 'Product Variants', to: '/product-variants', icon: PackageSearch, permission: 'inventory:view' },
   { label: 'Parties', to: '/parties', icon: Handshake, permission: 'parties:view' },
+  { label: 'Purchases', to: '/purchases', icon: ShoppingCart, permission: 'purchases:view' },
   { label: 'Users', to: '/users', icon: Users, permission: 'users:view' },
 ]

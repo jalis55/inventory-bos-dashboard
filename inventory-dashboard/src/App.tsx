@@ -13,6 +13,7 @@ import CompaniesPage from '@/pages/CompaniesPage'
 import BrandsPage from '@/pages/BrandsPage'
 import ProductVariantsPage from '@/pages/ProductVariantsPage'
 import PartiesPage from '@/pages/PartiesPage'
+import PurchasesPage from '@/pages/PurchasesPage'
 import UsersPage from '@/pages/UsersPage'
 import AccountPage from '@/pages/AccountPage'
 import UnauthorizedPage from '@/pages/UnauthorizedPage'
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/brands" element={<BrandsPage />} />
               <Route path="/product-variants" element={<ProductVariantsPage />} />
               <Route path="/parties" element={<PartiesPage />} />
+              <Route path="/purchases" element={<PurchasesPage />} />
               <Route path="/account" element={<AccountPage />} />
 
               {/* admin / super_admin only */}

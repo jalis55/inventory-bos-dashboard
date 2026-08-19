@@ -37,6 +37,9 @@ export const PERMISSIONS = {
 
   'parties:view': ALL_ROLES,
   'parties:manage': MANAGER_ROLES,
+
+  'purchases:view': ALL_ROLES,
+  'purchases:manage': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.STORE_KEEPER], // create/receive/cancel
 } as const
 
 export type Permission = keyof typeof PERMISSIONS
