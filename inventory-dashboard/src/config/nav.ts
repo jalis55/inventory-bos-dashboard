@@ -21,7 +21,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', to: '/', icon: LayoutDashboard, permission: 'dashboard:view' },
   { label: 'Products', to: '/products', icon: Boxes, permission: 'inventory:view' },
   { label: 'Categories', to: '/categories', icon: Tags, permission: 'inventory:view' },
-  { label: 'Companies', to: '/companies', icon: Building2, permission: 'inventory:view' },
+  { label: 'Brands', to: '/brands', icon: Building2, permission: 'inventory:view' },
   { label: 'Product Variants', to: '/product-variants', icon: PackageSearch, permission: 'inventory:view' },
   { label: 'Parties', to: '/parties', icon: Handshake, permission: 'parties:view' },
   { label: 'Users', to: '/users', icon: Users, permission: 'users:view' },

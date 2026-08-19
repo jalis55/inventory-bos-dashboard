@@ -10,6 +10,7 @@ import DashboardHome from '@/pages/DashboardHome'
 import ProductsPage from '@/pages/ProductsPage'
 import CategoriesPage from '@/pages/CategoriesPage'
 import CompaniesPage from '@/pages/CompaniesPage'
+import BrandsPage from '@/pages/BrandsPage'
 import ProductVariantsPage from '@/pages/ProductVariantsPage'
 import PartiesPage from '@/pages/PartiesPage'
 import UsersPage from '@/pages/UsersPage'
@@ -31,7 +32,7 @@ export default function App() {
               <Route path="/" element={<DashboardHome />} />
               <Route path="/products" element={<ProductsPage />} />
               <Route path="/categories" element={<CategoriesPage />} />
-              <Route path="/companies" element={<CompaniesPage />} />
+              <Route path="/brands" element={<BrandsPage />} />
               <Route path="/product-variants" element={<ProductVariantsPage />} />
               <Route path="/parties" element={<PartiesPage />} />
               <Route path="/account" element={<AccountPage />} />

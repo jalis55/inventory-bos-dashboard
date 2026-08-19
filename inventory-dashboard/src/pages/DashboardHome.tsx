@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/common/PageHeader'
 import { RequirePermission } from '@/components/auth/RequirePermission'
 import { useAuth } from '@/contexts/AuthContext'
 import { categoriesApi } from '@/api/categories'
-import { companiesApi } from '@/api/companies'
+import { brandsApi } from '@/api/brands'
 import { productsApi } from '@/api/products'
 import { productVariantsApi } from '@/api/productVariants'
 import { usersApi } from '@/api/users'
@@ -23,7 +23,7 @@ export default function DashboardHome() {
   const [stats, setStats] = useState<Stat[]>([
     { label: 'Products', value: null, icon: Boxes },
     { label: 'Categories', value: null, icon: Tags },
-    { label: 'Companies', value: null, icon: Building2 },
+    { label: 'Brands', value: null, icon: Building2 },
     { label: 'Product Variants', value: null, icon: PackageSearch },
   ])
   const [userCount, setUserCount] = useState<number | null>(null)
@@ -31,17 +31,17 @@ export default function DashboardHome() {
   useEffect(() => {
     let mounted = true
     async function load() {
-      const [products, categories, companies, variants] = await Promise.all([
+      const [products, categories, brands, variants] = await Promise.all([
         productsApi.list({ limit: 1 }),
         categoriesApi.list({ limit: 1 }),
-        companiesApi.list({ limit: 1 }),
+        brandsApi.list({ limit: 1 }),
         productVariantsApi.list({ limit: 1 }),
       ])
       if (!mounted) return
       setStats([
         { label: 'Products', value: products.total, icon: Boxes },
         { label: 'Categories', value: categories.total, icon: Tags },
-        { label: 'Companies', value: companies.total, icon: Building2 },
+        { label: 'Brands', value: brands.total, icon: Building2 },
         { label: 'Product Variants', value: variants.total, icon: PackageSearch },
       ])
     }

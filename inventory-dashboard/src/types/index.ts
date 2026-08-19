@@ -23,28 +23,38 @@ export interface Category {
   is_active: boolean
 }
 
-export interface Company {
-  id: number
-  name: string
-  is_active: boolean
-}
-
-export interface ProductVariant {
+export interface Brand {
   id: number
   name: string
   is_active: boolean
 }
 
 export interface Product {
-  id: number
+  id: string
   name: string
-  unit_of_measure: string
-  company_id: number
+  description?: string
+  brand_id: number
   category_id: number
-  product_variant_id: number
-  company?: Company
+  brand?: Brand
   category?: Category
-  variant?: ProductVariant
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface ProductVariant {
+  id: string
+  product_id: string
+  name: string
+  sku: string
+  barcode?: string
+  variant_name: string
+  unit_of_measure: string
+  pack_size: number
+  reorder_level: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface LoginPayload {

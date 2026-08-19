@@ -2,19 +2,39 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/common/PageHeader'
+import { StatusBadge } from '@/components/common/StatusBadge'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { RequirePermission } from '@/components/auth/RequirePermission'
 import { productsApi } from '@/api/products'
-import { companiesApi } from '@/api/companies'
+import { brandsApi } from '@/api/brands'
 import { categoriesApi } from '@/api/categories'
-import { productVariantsApi } from '@/api/productVariants'
 import { getApiErrorMessage } from '@/lib/axios'
-import type { Product, Company, Category, ProductVariant } from '@/types'
+import type { Product, Brand, Category } from '@/types'
 import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -22,10 +42,9 @@ const PAGE_SIZE = 10
 
 const emptyForm = {
   name: '',
-  unit_of_measure: '',
-  company_id: '',
+  description: '',
+  brand_id: '',
   category_id: '',
-  product_variant_id: '',
 }
 
 export default function ProductsPage() {
@@ -34,9 +53,8 @@ export default function ProductsPage() {
   const [skip, setSkip] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
 
-  const [companies, setCompanies] = useState<Company[]>([])
+  const [brands, setBrands] = useState<Brand[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [variants, setVariants] = useState<ProductVariant[]>([])
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
@@ -63,17 +81,14 @@ export default function ProductsPage() {
     load()
   }, [load])
 
-  // Load master data once for the create/edit selects.
   useEffect(() => {
     Promise.all([
-      companiesApi.list({ limit: 100 }),
+      brandsApi.list({ limit: 100 }),
       categoriesApi.list({ limit: 100 }),
-      productVariantsApi.list({ limit: 100 }),
     ])
-      .then(([c, cat, v]) => {
-        setCompanies(c.items)
-        setCategories(cat.items)
-        setVariants(v.items)
+      .then(([b, c]) => {
+        setBrands(b.items)
+        setCategories(c.items)
       })
       .catch(() => {})
   }, [])
@@ -88,25 +103,23 @@ export default function ProductsPage() {
     setEditing(item)
     setForm({
       name: item.name,
-      unit_of_measure: item.unit_of_measure,
-      company_id: String(item.company_id),
+      description: item.description ?? '',
+      brand_id: String(item.brand_id),
       category_id: String(item.category_id),
-      product_variant_id: String(item.product_variant_id),
     })
     setDialogOpen(true)
   }
 
   const handleSave = async () => {
-    if (!form.name.trim() || !form.company_id || !form.category_id || !form.product_variant_id || !form.unit_of_measure.trim()) {
-      toast.error('All fields are required')
+    if (!form.name.trim() || !form.brand_id || !form.category_id) {
+      toast.error('Name, brand and category are required')
       return
     }
     const payload = {
-      name: form.name,
-      unit_of_measure: form.unit_of_measure,
-      company_id: Number(form.company_id),
+      name: form.name.trim(),
+      description: form.description.trim() || undefined,
+      brand_id: Number(form.brand_id),
       category_id: Number(form.category_id),
-      product_variant_id: Number(form.product_variant_id),
     }
     setSaving(true)
     try {
@@ -126,12 +139,12 @@ export default function ProductsPage() {
     }
   }
 
-  const handleDelete = async () => {
+  const handleDeactivate = async () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await productsApi.remove(deleteTarget.id)
-      toast.success('Product deleted')
+      await productsApi.deactivate(deleteTarget.id)
+      toast.success('Product deactivated')
       setDeleteTarget(null)
       load()
     } catch (err) {
@@ -141,7 +154,8 @@ export default function ProductsPage() {
     }
   }
 
-  const nameOf = (list: { id: number; name: string }[], id: number) => list.find((i) => i.id === id)?.name ?? `#${id}`
+  const nameOf = (list: { id: number; name: string }[], id: number) =>
+    list.find((i) => i.id === id)?.name ?? `#${id}`
 
   const canPrev = skip > 0
   const canNext = skip + PAGE_SIZE < total
@@ -150,7 +164,7 @@ export default function ProductsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Products"
-        description="Products link a company, category and variant together."
+        description="Manage your product catalog."
         actions={
           <RequirePermission permission="inventory:manage">
             <Button onClick={openCreate}>
@@ -166,10 +180,10 @@ export default function ProductsPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Company</TableHead>
+              <TableHead>Brand</TableHead>
               <TableHead>Category</TableHead>
-              <TableHead>Variant</TableHead>
-              <TableHead>Unit</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Status</TableHead>
               <RequirePermission permission="inventory:manage">
                 <TableHead className="w-24 text-right">Actions</TableHead>
               </RequirePermission>
@@ -186,7 +200,10 @@ export default function ProductsPage() {
               ))}
             {!isLoading && items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                <TableCell
+                  colSpan={6}
+                  className="py-8 text-center text-sm text-muted-foreground"
+                >
                   No products yet.
                 </TableCell>
               </TableRow>
@@ -195,17 +212,33 @@ export default function ProductsPage() {
               items.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell>{item.company?.name ?? nameOf(companies, item.company_id)}</TableCell>
-                  <TableCell>{item.category?.name ?? nameOf(categories, item.category_id)}</TableCell>
-                  <TableCell>{item.variant?.name ?? nameOf(variants, item.product_variant_id)}</TableCell>
-                  <TableCell>{item.unit_of_measure}</TableCell>
+                  <TableCell>
+                    {item.brand?.name ?? nameOf(brands, item.brand_id)}
+                  </TableCell>
+                  <TableCell>
+                    {item.category?.name ?? nameOf(categories, item.category_id)}
+                  </TableCell>
+                  <TableCell className="max-w-[200px] truncate text-muted-foreground">
+                    {item.description ?? '—'}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge active={item.is_active} />
+                  </TableCell>
                   <RequirePermission permission="inventory:manage">
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => openEdit(item)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEdit(item)}
+                        >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(item)}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(item)}
+                        >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -219,13 +252,24 @@ export default function ProductsPage() {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          {total === 0 ? 0 : skip + 1}–{Math.min(skip + PAGE_SIZE, total)} of {total}
+          {total === 0 ? 0 : skip + 1}–{Math.min(skip + PAGE_SIZE, total)} of{' '}
+          {total}
         </span>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={!canPrev} onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canPrev}
+            onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}
+          >
             Previous
           </Button>
-          <Button variant="outline" size="sm" disabled={!canNext} onClick={() => setSkip(skip + PAGE_SIZE)}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!canNext}
+            onClick={() => setSkip(skip + PAGE_SIZE)}
+          >
             Next
           </Button>
         </div>
@@ -234,52 +278,62 @@ export default function ProductsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? 'Edit Product' : 'Add Product'}</DialogTitle>
+            <DialogTitle>
+              {editing ? 'Edit Product' : 'Add Product'}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
               <Label htmlFor="product-name">Name</Label>
-              <Input id="product-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="uom">Unit of measure</Label>
               <Input
-                id="uom"
-                placeholder="e.g. pcs, kg, box"
-                value={form.unit_of_measure}
-                onChange={(e) => setForm({ ...form, unit_of_measure: e.target.value })}
+                id="product-name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="product-desc">Description</Label>
+              <Input
+                id="product-desc"
+                value={form.description}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setForm({ ...form, description: e.target.value })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Company</Label>
-                <Select value={form.company_id} onValueChange={(v) => setForm({ ...form, company_id: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <Label>Brand</Label>
+                <Select
+                  value={form.brand_id}
+                  onValueChange={(v) => setForm({ ...form, brand_id: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {companies.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                    {brands.map((b) => (
+                      <SelectItem key={b.id} value={String(b.id)}>
+                        {b.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>Category</Label>
-                <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                <Select
+                  value={form.category_id}
+                  onValueChange={(v) => setForm({ ...form, category_id: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
                   <SelectContent>
                     {categories.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Variant</Label>
-                <Select value={form.product_variant_id} onValueChange={(v) => setForm({ ...form, product_variant_id: v })}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>
-                    {variants.map((v) => (
-                      <SelectItem key={v.id} value={String(v.id)}>{v.name}</SelectItem>
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -287,7 +341,11 @@ export default function ProductsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
+            <Button
+              variant="outline"
+              onClick={() => setDialogOpen(false)}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button onClick={handleSave} disabled={saving}>
@@ -301,9 +359,9 @@ export default function ProductsPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete product?"
-        description={`This will permanently delete "${deleteTarget?.name}". This action cannot be undone.`}
-        onConfirm={handleDelete}
+        title="Deactivate product?"
+        description={`This will deactivate "${deleteTarget?.name}". It can be reactivated later.`}
+        onConfirm={handleDeactivate}
         isLoading={deleting}
       />
     </div>
