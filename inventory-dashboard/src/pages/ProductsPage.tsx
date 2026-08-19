@@ -28,14 +28,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/common/PageHeader'
 import { StatusBadge } from '@/components/common/StatusBadge'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { RequirePermission } from '@/components/auth/RequirePermission'
 import { productsApi } from '@/api/products'
 import { brandsApi } from '@/api/brands'
 import { categoriesApi } from '@/api/categories'
 import { getApiErrorMessage } from '@/lib/axios'
 import type { Product, Brand, Category } from '@/types'
-import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Pencil, ToggleLeft, ToggleRight, Search, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 const PAGE_SIZE = 10
@@ -56,18 +55,27 @@ export default function ProductsPage() {
   const [brands, setBrands] = useState<Brand[]>([])
   const [categories, setCategories] = useState<Category[]>([])
 
+  const [search, setSearch] = useState('')
+  const [brandFilter, setBrandFilter] = useState<string>('ALL')
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL')
+  const [statusFilter, setStatusFilter] = useState<string>('ALL')
+
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Product | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
 
-  const [deleteTarget, setDeleteTarget] = useState<Product | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await productsApi.list({ skip, limit: PAGE_SIZE })
+      const params: Record<string, unknown> = { skip, limit: PAGE_SIZE }
+      if (search.trim()) params.search = search.trim()
+      if (brandFilter !== 'ALL') params.brand_id = Number(brandFilter)
+      if (categoryFilter !== 'ALL') params.category_id = Number(categoryFilter)
+      if (statusFilter !== 'ALL') params.is_active = statusFilter === 'ACTIVE'
+      const res = await productsApi.list(params)
       setItems(res.items)
       setTotal(res.total)
     } catch (err) {
@@ -75,7 +83,7 @@ export default function ProductsPage() {
     } finally {
       setIsLoading(false)
     }
-  }, [skip])
+  }, [skip, search, brandFilter, categoryFilter, statusFilter])
 
   useEffect(() => {
     load()
@@ -104,8 +112,8 @@ export default function ProductsPage() {
     setForm({
       name: item.name,
       description: item.description ?? '',
-      brand_id: String(item.brand_id),
-      category_id: String(item.category_id),
+      brand_id: String(item.brand?.id ?? ''),
+      category_id: String(item.category?.id ?? ''),
     })
     setDialogOpen(true)
   }
@@ -139,23 +147,29 @@ export default function ProductsPage() {
     }
   }
 
-  const handleDeactivate = async () => {
-    if (!deleteTarget) return
-    setDeleting(true)
+  const handleToggleActive = async (product: Product) => {
+    setTogglingId(product.id)
     try {
-      await productsApi.deactivate(deleteTarget.id)
-      toast.success('Product deactivated')
-      setDeleteTarget(null)
+      if (product.is_active) {
+        await productsApi.deactivate(product.id)
+        toast.success(`${product.name} deactivated`)
+      } else {
+        await productsApi.activate(product.id)
+        toast.success(`${product.name} activated`)
+      }
       load()
     } catch (err) {
       toast.error(getApiErrorMessage(err))
     } finally {
-      setDeleting(false)
+      setTogglingId(null)
     }
   }
 
-  const nameOf = (list: { id: number; name: string }[], id: number) =>
-    list.find((i) => i.id === id)?.name ?? `#${id}`
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setSkip(0)
+    load()
+  }
 
   const canPrev = skip > 0
   const canNext = skip + PAGE_SIZE < total
@@ -174,6 +188,77 @@ export default function ProductsPage() {
           </RequirePermission>
         }
       />
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <form onSubmit={handleSearchSubmit} className="flex gap-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search products..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8 w-56"
+            />
+          </div>
+          <Button type="submit" variant="secondary" size="sm">
+            Search
+          </Button>
+        </form>
+        <Select
+          value={brandFilter}
+          onValueChange={(v) => {
+            setBrandFilter(v)
+            setSkip(0)
+          }}
+        >
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="All Brands" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Brands</SelectItem>
+            {brands.map((b) => (
+              <SelectItem key={b.id} value={String(b.id)}>
+                {b.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={categoryFilter}
+          onValueChange={(v) => {
+            setCategoryFilter(v)
+            setSkip(0)
+          }}
+        >
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Categories</SelectItem>
+            {categories.map((c) => (
+              <SelectItem key={c.id} value={String(c.id)}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={statusFilter}
+          onValueChange={(v) => {
+            setStatusFilter(v)
+            setSkip(0)
+          }}
+        >
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Status</SelectItem>
+            <SelectItem value="ACTIVE">Active</SelectItem>
+            <SelectItem value="INACTIVE">Inactive</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="rounded-lg border bg-card">
         <Table>
@@ -212,12 +297,8 @@ export default function ProductsPage() {
               items.map((item) => (
                 <TableRow key={item.id}>
                   <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell>
-                    {item.brand?.name ?? nameOf(brands, item.brand_id)}
-                  </TableCell>
-                  <TableCell>
-                    {item.category?.name ?? nameOf(categories, item.category_id)}
-                  </TableCell>
+                  <TableCell>{item.brand?.name ?? '—'}</TableCell>
+                  <TableCell>{item.category?.name ?? '—'}</TableCell>
                   <TableCell className="max-w-[200px] truncate text-muted-foreground">
                     {item.description ?? '—'}
                   </TableCell>
@@ -237,9 +318,14 @@ export default function ProductsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => setDeleteTarget(item)}
+                          disabled={togglingId === item.id}
+                          onClick={() => handleToggleActive(item)}
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
+                          {item.is_active ? (
+                            <ToggleRight className="h-4 w-4 text-destructive" />
+                          ) : (
+                            <ToggleLeft className="h-4 w-4 text-green-600" />
+                          )}
                         </Button>
                       </div>
                     </TableCell>
@@ -355,15 +441,6 @@ export default function ProductsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <ConfirmDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Deactivate product?"
-        description={`This will deactivate "${deleteTarget?.name}". It can be reactivated later.`}
-        onConfirm={handleDeactivate}
-        isLoading={deleting}
-      />
     </div>
   )
 }

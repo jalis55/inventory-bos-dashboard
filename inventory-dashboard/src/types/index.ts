@@ -33,10 +33,8 @@ export interface Product {
   id: string
   name: string
   description?: string
-  brand_id: number
-  category_id: number
-  brand?: Brand
-  category?: Category
+  brand: Brand
+  category: Category
   is_active: boolean
   created_at: string
   updated_at: string
