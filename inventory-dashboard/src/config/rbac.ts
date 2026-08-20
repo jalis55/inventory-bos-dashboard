@@ -33,6 +33,8 @@ export const PERMISSIONS = {
   'inventory:view': ALL_ROLES, // categories/companies/products/variants - read
   'inventory:manage': MANAGER_ROLES, // create/update/delete master data
 
+  'stock:view': ALL_ROLES, // stock movements / batches - read-only audit log
+
   'dashboard:view': ALL_ROLES,
 
   'parties:view': ALL_ROLES,
@@ -40,6 +42,12 @@ export const PERMISSIONS = {
 
   'purchases:view': ALL_ROLES,
   'purchases:manage': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.STORE_KEEPER], // create/receive/cancel
+
+  'sales:view': ALL_ROLES,
+  'sales:manage': [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.STORE_KEEPER], // create/complete/cancel
+
+  'payments:view': ALL_ROLES,
+  'payments:manage': MANAGER_ROLES, // record payments / refunds (mirrors backend require_superadmin_or_admin)
 } as const
 
 export type Permission = keyof typeof PERMISSIONS

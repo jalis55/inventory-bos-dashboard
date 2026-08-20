@@ -32,7 +32,8 @@ import { RequirePermission } from '@/components/auth/RequirePermission'
 import { partiesApi } from '@/api/parties'
 import { getApiErrorMessage } from '@/lib/axios'
 import type { Party, PartyType } from '@/types'
-import { Plus, Pencil, ToggleLeft, ToggleRight, Search, Loader2 } from 'lucide-react'
+import { Plus, Pencil, ToggleLeft, ToggleRight, Search, Loader2, BookOpen } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 const PAGE_SIZE = 10
@@ -73,6 +74,11 @@ export default function PartiesPage() {
   const [saving, setSaving] = useState(false)
 
   const [togglingId, setTogglingId] = useState<number | null>(null)
+
+  const navigate = useNavigate()
+
+  const openLedger = (party: Party) =>
+    navigate(`/party-ledger?party_id=${party.id}&type=${party.party_type}`)
 
   const load = useCallback(async () => {
     setIsLoading(true)
@@ -236,9 +242,7 @@ export default function PartiesPage() {
               <TableHead>Email</TableHead>
               <TableHead className="text-right">Balance</TableHead>
               <TableHead>Status</TableHead>
-              <RequirePermission permission="parties:manage">
-                <TableHead className="w-24 text-right">Actions</TableHead>
-              </RequirePermission>
+              <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -283,9 +287,12 @@ export default function PartiesPage() {
                   <TableCell>
                     <StatusBadge active={item.is_active} />
                   </TableCell>
-                  <RequirePermission permission="parties:manage">
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => openLedger(item)}>
+                        <BookOpen className="h-4 w-4" />
+                      </Button>
+                      <RequirePermission permission="parties:manage">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -305,9 +312,9 @@ export default function PartiesPage() {
                             <ToggleLeft className="h-4 w-4 text-green-600" />
                           )}
                         </Button>
-                      </div>
-                    </TableCell>
-                  </RequirePermission>
+                      </RequirePermission>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
           </TableBody>

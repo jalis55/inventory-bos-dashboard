@@ -39,7 +39,7 @@ export const purchasesApi = {
   ) => api.put<Purchase>(`/purchases/${id}`, data).then((r) => r.data),
 
   receive: (id: string) =>
-    api.post<Purchase>(`/purchases/${id}/receive`).then((r) => r.data),
+    api.post<Purchase>(`/purchases/${id}/receive`, {}).then((r) => r.data),
 
   cancel: (id: string, reason?: string) =>
     api.post<Purchase>(`/purchases/${id}/cancel`, { reason }).then((r) => r.data),
