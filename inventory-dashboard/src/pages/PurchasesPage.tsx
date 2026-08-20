@@ -41,12 +41,14 @@ import { RequirePermission } from '@/components/auth/RequirePermission'
 import { purchasesApi } from '@/api/purchases'
 import { partiesApi } from '@/api/parties'
 import { productVariantsApi } from '@/api/productVariants'
+import { printPurchaseInvoice } from '@/utils/invoice'
 import { getApiErrorMessage } from '@/lib/axios'
 import type { Purchase, PurchaseStatus, Party, ProductVariant } from '@/types'
 import {
   Plus,
   Pencil,
   Eye,
+  Printer,
   PackageCheck,
   XCircle,
   Loader2,
@@ -297,6 +299,11 @@ export default function PurchasesPage() {
     return v ? `${v.name} (${v.sku})` : id
   }
 
+  const printInvoice = (item: Purchase) => {
+    const supplier = suppliers.find((s) => s.id === item.supplier_id)
+    printPurchaseInvoice(item, { supplier, variants })
+  }
+
   const money = (n: number) =>
     n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -412,6 +419,14 @@ export default function PurchasesPage() {
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openView(item)}>
                           <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Download / print invoice"
+                          onClick={() => printInvoice(item)}
+                        >
+                          <Printer className="h-4 w-4" />
                         </Button>
                         <RequirePermission permission="purchases:manage">
                           {isDraft && (

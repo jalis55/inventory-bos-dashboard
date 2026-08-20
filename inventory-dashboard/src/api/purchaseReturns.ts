@@ -4,6 +4,7 @@ import type { PurchaseReturn, PurchaseReturnOutPaginate } from '@/types'
 export interface PurchaseReturnLineInput {
   purchase_line_id: string
   qty: number
+  reason?: string
 }
 
 export interface PurchaseReturnInput {

@@ -178,8 +178,11 @@ export default function ProductVariantsPage() {
     }
   }
 
-  const productName = (productId: string) =>
-    products.find((p) => p.id === productId)?.name ?? productId.slice(0, 8)
+  const productName = (productId: string) => {
+    const p = products.find((pr) => pr.id === productId)
+    if (!p) return productId.slice(0, 8)
+    return `${p.name} — ${p.brand?.name ?? 'No brand'}`
+  }
 
   const canPrev = skip > 0
   const canNext = skip + PAGE_SIZE < total
@@ -214,7 +217,7 @@ export default function ProductVariantsPage() {
             <SelectItem value="ALL">All Products</SelectItem>
             {products.map((p) => (
               <SelectItem key={p.id} value={p.id}>
-                {p.name}
+                {productName(p.id)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -351,7 +354,7 @@ export default function ProductVariantsPage() {
                   <SelectContent>
                     {products.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
-                        {p.name}
+                        {productName(p.id)}
                       </SelectItem>
                     ))}
                   </SelectContent>

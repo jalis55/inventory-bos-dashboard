@@ -299,6 +299,7 @@ export interface PurchaseReturnLine {
   qty: number
   unit_cost: number
   line_total: number
+  reason?: string
 }
 
 export interface PurchaseReturn {

@@ -21,6 +21,7 @@ export const purchasesApi = {
     limit?: number
     supplier_id?: number
     status?: PurchaseStatus
+    search?: string
   }) => api.get<PurchaseOutPaginate>('/purchases', { params }).then((r) => r.data),
 
   get: (id: string) => api.get<Purchase>(`/purchases/${id}`).then((r) => r.data),
