@@ -51,6 +51,7 @@ export interface ProductVariant {
   pack_size: number
   reorder_level: number
   is_active: boolean
+  qty_in_stock: number
   created_at: string
   updated_at: string
 }
@@ -143,6 +144,7 @@ export interface Payment {
   reference_no?: string
   notes?: string
   sale_id?: string
+  purchase_id?: string
   sales_return_id?: string
   created_by?: number
   created_at: string
@@ -164,6 +166,7 @@ export interface PurchaseLine {
   qty: number
   unit_cost: number
   line_total: number
+  qty_remaining?: number
 }
 
 export interface Purchase {
@@ -176,6 +179,8 @@ export interface Purchase {
   created_by?: number
   created_at: string
   updated_at: string
+  amount_paid: number
+  returned_amount: number
   lines: PurchaseLine[]
 }
 
@@ -331,6 +336,7 @@ export interface SalesReturnLine {
   qty: number
   unit_price: number
   line_total: number
+  reason?: string
 }
 
 export interface SalesReturn {
@@ -354,3 +360,65 @@ export interface SalesReturnOutPaginate {
 export interface ApiError {
   detail: string | { msg: string }[]
 }
+
+export interface InvoiceLedgerLine {
+  variant_name: string | null
+  variant_sku: string | null
+  qty: number
+  rate: number
+  line_total: number
+}
+
+export interface InvoiceLedgerTransaction {
+  date: string
+  description: string
+  debit: number
+  credit: number
+  balance: number
+}
+
+/**
+ * Per-invoice financial statement. `outstanding` = total − paid − returned;
+ * positive means still due (you owe a purchase / a customer owes a sale),
+ * negative means a credit.
+ */
+export interface InvoiceLedgerDoc {
+  kind: 'PURCHASE' | 'SALE'
+  id: string
+  reference_no: string | null
+  invoice_date: string
+  status: string
+  party_id: number | null
+  party_name: string | null
+  party_type: string | null
+  total: number
+  amount_paid: number
+  returned_amount: number
+  outstanding: number
+  lines: InvoiceLedgerLine[]
+  transactions: InvoiceLedgerTransaction[]
+}
+
+/** One invoice summary within a party's invoice-wise ledger listing. */
+export interface InvoiceLedgerPartyInvoice {
+  invoice_kind: 'PURCHASE' | 'SALE'
+  id: string
+  reference_no: string | null
+  invoice_date: string
+  status: string
+  total: number
+  amount_paid: number
+  returned_amount: number
+  outstanding: number
+}
+
+/** Entering a customer/supplier id returns their full invoice-wise ledger. */
+export interface InvoiceLedgerPartyDoc {
+  kind: 'PARTY'
+  party_id: number
+  party_name: string
+  party_type: string
+  invoices: InvoiceLedgerPartyInvoice[]
+}
+
+export type InvoiceLedgerResponse = InvoiceLedgerDoc | InvoiceLedgerPartyDoc

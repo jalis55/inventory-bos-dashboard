@@ -20,6 +20,7 @@ export const salesApi = {
     limit?: number
     party_id?: number
     status?: SaleStatus
+    search?: string
   }) => api.get<SaleOutPaginate>('/sales', { params }).then((r) => r.data),
 
   get: (id: string) => api.get<Sale>(`/sales/${id}`).then((r) => r.data),

@@ -10,6 +10,7 @@ export interface PaymentInput {
   reference_no?: string
   notes?: string
   sale_id?: string
+  purchase_id?: string
 }
 
 export const paymentsApi = {

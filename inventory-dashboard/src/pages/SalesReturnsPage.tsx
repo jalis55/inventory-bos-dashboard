@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,13 +10,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   Table,
   TableBody,
   TableCell,
@@ -24,27 +17,37 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/common/PageHeader'
-import { RequirePermission } from '@/components/auth/RequirePermission'
 import { salesReturnsApi } from '@/api/salesReturns'
 import { salesApi } from '@/api/sales'
 import { partiesApi } from '@/api/parties'
 import { productVariantsApi } from '@/api/productVariants'
+import { printSalesReturnInvoice } from '@/utils/invoice'
 import { getApiErrorMessage } from '@/lib/axios'
-import type { SalesReturn, Party, Sale, SaleLine, ProductVariant } from '@/types'
-import { Plus, Eye, Loader2, Trash2 } from 'lucide-react'
+import type { Party, Sale, ProductVariant } from '@/types'
+import {
+  Plus,
+  Loader2,
+  Trash2,
+  Search,
+  FilePlus2,
+  X,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
-const PAGE_SIZE = 10
-
-interface LineForm {
-  sale_id: string
+interface ReturnItemForm {
   sale_line_id: string
   qty: string
+  reason: string
 }
 
-const emptyLine: LineForm = { sale_id: '', sale_line_id: '', qty: '' }
+interface SaleBlock {
+  key: string
+  sale_id: string
+  items: ReturnItemForm[]
+}
+
+const emptyItem: ReturnItemForm = { sale_line_id: '', qty: '', reason: '' }
 
 const emptyForm = {
   party_id: '',
@@ -52,180 +55,281 @@ const emptyForm = {
 }
 
 export default function SalesReturnsPage() {
-  const [items, setItems] = useState<SalesReturn[]>([])
-  const [total, setTotal] = useState(0)
-  const [skip, setSkip] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
-
-  const [partyFilter, setPartyFilter] = useState<string>('ALL')
-
   const [customers, setCustomers] = useState<Party[]>([])
   const [variants, setVariants] = useState<ProductVariant[]>([])
-  const [completedSales, setCompletedSales] = useState<Sale[]>([])
-  const [salesLoading, setSalesLoading] = useState(false)
 
-  const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
-  const [lines, setLines] = useState<LineForm[]>([{ ...emptyLine }])
+  const [blocks, setBlocks] = useState<SaleBlock[]>([])
   const [saving, setSaving] = useState(false)
+  const [partyChosen, setPartyChosen] = useState(false)
 
-  const [viewing, setViewing] = useState<SalesReturn | null>(null)
+  const [sales, setSales] = useState<Sale[]>([])
+  const [salesLoading, setSalesLoading] = useState(false)
+  const [manualRef, setManualRef] = useState('')
 
-  const load = useCallback(async () => {
-    setIsLoading(true)
+  const keyRef = useRef(0)
+  const nextKey = () => String(++keyRef.current)
+
+  const makeBlock = (): SaleBlock => ({
+    key: nextKey(),
+    sale_id: '',
+    items: [{ ...emptyItem }],
+  })
+
+  const remainingSaleLines = (block: SaleBlock) => {
+    const sale = saleOf(block.sale_id)
+    if (!sale) return 0
+    const used = new Set(block.items.map((it) => it.sale_line_id))
+    return sale.lines.filter((l) => !used.has(l.id)).length
+  }
+
+  const salesUsedElsewhere = (blockIdx: number) =>
+    new Set(
+      blocks.filter((_, i) => i !== blockIdx).map((b) => b.sale_id).filter(Boolean),
+    )
+
+  const itemsUsedInBlock = (blockIdx: number, exceptItemIdx: number) =>
+    new Set(
+      blocks[blockIdx]?.items
+        .filter((_, j) => j !== exceptItemIdx)
+        .map((it) => it.sale_line_id) ?? [],
+    )
+
+  const usedSaleIds = new Set(blocks.map((b) => b.sale_id).filter(Boolean))
+
+  const availableSales = sales.filter((s) => !usedSaleIds.has(s.id))
+
+  const loadCatalog = useCallback(async () => {
     try {
-      const params: Record<string, unknown> = { skip, limit: PAGE_SIZE }
-      if (partyFilter !== 'ALL') params.party_id = Number(partyFilter)
-      const res = await salesReturnsApi.list(params)
-      setItems(res.items)
-      setTotal(res.total)
-    } catch (err) {
-      toast.error(getApiErrorMessage(err))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [skip, partyFilter])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const loadCustomers = useCallback(async () => {
-    try {
-      const [customersRes, walkIns] = await Promise.all([
+      const [cust, walkIns, vars] = await Promise.all([
         partiesApi.list({ limit: 200, party_type: 'CUSTOMER', is_active: true }),
         partiesApi.list({ limit: 200, party_type: 'WALK_IN', is_active: true }),
+        productVariantsApi.list({ limit: 200, is_active: true }),
       ])
-      setCustomers([...customersRes.items, ...walkIns.items])
+      setCustomers([...cust.items, ...walkIns.items])
+      setVariants(vars.items)
     } catch {
-      // party picker still works, just without names
-    }
-  }, [])
-
-  const loadVariants = useCallback(async () => {
-    try {
-      const res = await productVariantsApi.list({ limit: 200, is_active: true })
-      setVariants(res.items)
-    } catch {
-      // line picker still works, just showing raw variant ids
+      // pickers still work, just without names
     }
   }, [])
 
   useEffect(() => {
-    loadCustomers()
-    loadVariants()
-  }, [loadCustomers, loadVariants])
+    loadCatalog()
+  }, [loadCatalog])
 
-  const loadCompletedSales = useCallback(async () => {
+  const loadSales = useCallback(async (partyId: string) => {
+    if (partyId === '') {
+      setSales([])
+      return
+    }
     setSalesLoading(true)
     try {
-      const res = await salesApi.list({ status: 'COMPLETED', limit: 200 })
-      setCompletedSales(res.items)
-    } catch {
-      // line picker still works for previously loaded sales
+      const res = await salesApi.list({
+        party_id: Number(partyId),
+        status: 'COMPLETED',
+        limit: 200,
+      })
+      setSales(res.items)
+    } catch (err) {
+      setSales([])
+      toast.error(getApiErrorMessage(err))
     } finally {
       setSalesLoading(false)
     }
   }, [])
 
-  const openCreate = () => {
-    setForm({ party_id: '', return_date: new Date().toISOString().slice(0, 10) })
-    setLines([{ ...emptyLine }])
-    setDialogOpen(true)
-    loadCompletedSales()
+  const resetEditor = () => {
+    setForm({
+      party_id: '',
+      return_date: new Date().toISOString().slice(0, 10),
+    })
+    setPartyChosen(false)
+    setSales([])
+    setManualRef('')
+    setBlocks([makeBlock()])
   }
 
-  const openView = async (item: SalesReturn) => {
+  useEffect(() => {
+    resetEditor()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const selectParty = (value: string) => {
+    setForm((f) => ({ ...f, party_id: value }))
+    setPartyChosen(true)
+    setManualRef('')
+    setBlocks([makeBlock()])
+    if (value === '') {
+      // Walk-in (cash refund): completed sales with no linked party.
+      setSalesLoading(true)
+      salesApi
+        .list({ status: 'COMPLETED', limit: 200 })
+        .then((res) => {
+          setSales(res.items.filter((s) => s.party_id == null))
+        })
+        .catch(() => {})
+        .finally(() => setSalesLoading(false))
+    } else {
+      loadSales(value)
+    }
+  }
+
+  const lookupSale = async () => {
+    const q = manualRef.trim()
+    if (!q) {
+      toast.error('Enter a sale id first')
+      return
+    }
     try {
-      const fresh = await salesReturnsApi.get(item.id)
-      setViewing(fresh)
+      const res = await salesApi.list({
+        party_id: form.party_id ? Number(form.party_id) : undefined,
+        status: 'COMPLETED',
+        limit: 5,
+        search: q,
+      })
+      if (res.items.length === 0) {
+        toast.error(`No completed sale matches "${q}"`)
+        return
+      }
+      setSales((cur) => {
+        const ids = new Set(cur.map((s) => s.id))
+        const missing = res.items.filter((s) => !ids.has(s.id))
+        return missing.length ? [...cur, ...missing] : cur
+      })
+      toast.success(`${res.items.length} sale(s) added to the picker`)
     } catch (err) {
       toast.error(getApiErrorMessage(err))
     }
   }
 
-  const partyName = (id?: number) =>
-    id == null ? 'Walk-in' : customers.find((c) => c.id === id)?.name ?? `#${id}`
+  // ─── sale block actions ─────────────────────────────────────────────────────
 
-  const partySales = () => {
-    const pid = form.party_id ? Number(form.party_id) : null
-    return completedSales.filter((s) =>
-      pid == null ? s.party_id == null : s.party_id === pid,
+  const addSaleBlock = () => setBlocks((b) => [...b, makeBlock()])
+
+  const removeSaleBlock = (idx: number) => {
+    if (blocks.length === 1) {
+      toast.error('At least one sale is required')
+      return
+    }
+    setBlocks(blocks.filter((_, i) => i !== idx))
+  }
+
+  const setBlockSale = (idx: number, saleId: string) => {
+    setBlocks(
+      blocks.map((b, i) =>
+        i === idx ? { ...b, sale_id: saleId, items: [{ ...emptyItem }] } : b,
+      ),
     )
   }
 
-  const addLine = () => setLines([...lines, { ...emptyLine }])
+  // ─── per-sale item actions ──────────────────────────────────────────────────
 
-  const removeLine = (idx: number) => {
-    if (lines.length === 1) {
-      toast.error('A return needs at least one line')
-      return
-    }
-    setLines(lines.filter((_, i) => i !== idx))
+  const addSaleItem = (blockIdx: number) => {
+    setBlocks(
+      blocks.map((b, i) => (i === blockIdx ? { ...b, items: [...b.items, { ...emptyItem }] } : b)),
+    )
   }
 
-  const updateLine = (idx: number, field: keyof LineForm, value: string) => {
-    if (field === 'sale_id') {
-      // Changing the sale invalidates the previously chosen line.
-      setLines(lines.map((l, i) => (i === idx ? { ...l, sale_id: value, sale_line_id: '' } : l)))
-      return
-    }
-    setLines(lines.map((l, i) => (i === idx ? { ...l, [field]: value } : l)))
+  const removeSaleItem = (blockIdx: number, itemIdx: number) => {
+    setBlocks(
+      blocks.map((b, i) => {
+        if (i !== blockIdx) return b
+        if (b.items.length === 1) {
+          toast.error('A sale needs at least one item')
+          return b
+        }
+        return { ...b, items: b.items.filter((_, j) => j !== itemIdx) }
+      }),
+    )
   }
 
-  const selectedSale = (idx: number) =>
-    partySales().find((s) => s.id === lines[idx]?.sale_id)
+  const updateItem = (blockIdx: number, itemIdx: number, key: keyof ReturnItemForm, value: string) => {
+    setBlocks(
+      blocks.map((b, i) => {
+        if (i !== blockIdx) return b
+        return {
+          ...b,
+          items: b.items.map((it, j) => (j === itemIdx ? { ...it, [key]: value } : it)),
+        }
+      }),
+    )
+  }
 
-  const selectedLine = (idx: number) =>
-    selectedSale(idx)?.lines.find((l) => l.id === lines[idx]?.sale_line_id)
+  // ─── derived helpers ──────────────────────────────────────────────────────
+
+  const saleOf = (id: string) => sales.find((s) => s.id === id)
+
+  const saleTotal = (s: Sale) => s.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
 
   const variantLabel = (id: string) => {
     const v = variants.find((v) => v.id === id)
-    return v ? `${v.name} (${v.sku})` : id
+    return v ? `${v.name} (${v.sku})` : id.slice(0, 8)
   }
 
-  const lineTotal = (l: LineForm) => {
-    const line = partySales()
-      .find((s) => s.id === l.sale_id)
-      ?.lines.find((sl) => sl.id === l.sale_line_id)
-    const qty = Number(l.qty) || 0
-    const price = line ? Number(line.unit_price) : 0
+  const itemAmount = (block: SaleBlock, item: ReturnItemForm) => {
+    const sl = saleOf(block.sale_id)?.lines.find((l) => l.id === item.sale_line_id)
+    const qty = Number(item.qty) || 0
+    const price = sl ? Number(sl.unit_price) : 0
     return qty * price
   }
 
-  const formTotal = lines.reduce((sum, l) => sum + lineTotal(l), 0)
+  const formTotal = blocks.reduce(
+    (sum, b) => sum + b.items.reduce((s, it) => s + itemAmount(b, it), 0),
+    0,
+  )
+
+  const usedSales = blocks.filter((b) => b.sale_id).map((b) => saleOf(b.sale_id)!).filter(Boolean)
 
   const handleSave = async () => {
     if (!form.return_date) {
       toast.error('Return date is required')
       return
     }
-    const lineMap = new Map<string, SaleLine>()
-    for (const s of completedSales) for (const l of s.lines) lineMap.set(l.id, l)
-    const validLines = lines.map((l) => ({ line: lineMap.get(l.sale_line_id), qty: Number(l.qty) }))
-    if (validLines.some((x) => !x.line || x.qty <= 0 || x.qty > Number(x.line.qty))) {
-      toast.error('Each line needs a sale line and a qty between 1 and the quantity sold')
+    const validLines: { sale_line_id: string; qty: number; reason?: string }[] = []
+    for (const block of blocks) {
+      if (!block.sale_id) {
+        toast.error('Every sale block needs a completed sale selected')
+        return
+      }
+      for (const it of block.items) {
+        if (!it.sale_line_id || !Number(it.qty) || Number(it.qty) <= 0) {
+          toast.error('Each item needs a line and a qty > 0')
+          return
+        }
+        const sl = saleOf(block.sale_id)?.lines.find((l) => l.id === it.sale_line_id)
+        if (Number(it.qty) > Number(sl?.qty ?? 0)) {
+          toast.error('Qty cannot exceed the quantity sold')
+          return
+        }
+        validLines.push({
+          sale_line_id: it.sale_line_id,
+          qty: Number(it.qty),
+          reason: it.reason.trim() || undefined,
+        })
+      }
+    }
+    if (validLines.length === 0) {
+      toast.error('Add at least one item to return')
       return
     }
 
     setSaving(true)
     try {
-      await salesReturnsApi.create({
+      const created = await salesReturnsApi.create({
         party_id: form.party_id ? Number(form.party_id) : undefined,
         return_date: form.return_date,
-        reason: undefined,
-        lines: validLines.map((x) => ({
-          sale_line_id: x.line!.id,
-          qty: x.qty,
-        })),
+        lines: validLines,
       })
+      const customer = form.party_id
+        ? customers.find((c) => c.id === Number(form.party_id))
+        : undefined
       toast.success(
         form.party_id
-          ? 'Sales return recorded — stock restocked & customer balance adjusted'
+          ? `Sales return recorded across ${usedSales.length} sale(s) — stock restocked & customer balance adjusted`
           : 'Sales return recorded — stock restocked & cash refund generated',
       )
-      setDialogOpen(false)
-      load()
+      resetEditor()
+      printSalesReturnInvoice(created, { customer })
     } catch (err) {
       toast.error(getApiErrorMessage(err))
     } finally {
@@ -233,348 +337,269 @@ export default function SalesReturnsPage() {
     }
   }
 
-  const returnTotal = (r: SalesReturn) =>
-    r.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
-
   const money = (n: number) =>
     n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  const canPrev = skip > 0
-  const canNext = skip + PAGE_SIZE < total
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Sales Returns"
-        description="Accept returned goods — stock is restocked and the customer is credited or refunded."
-        actions={
-          <RequirePermission permission="sales:manage">
-            <Button onClick={openCreate}>
-              <Plus className="h-4 w-4" />
-              New Return
-            </Button>
-          </RequirePermission>
-        }
+        description="Accept returned goods against one or more of a customer's completed sales — each sale can have many items."
       />
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Select
-          value={partyFilter}
-          onValueChange={(v) => {
-            setPartyFilter(v)
-            setSkip(0)
-          }}
-        >
-          <SelectTrigger className="w-64">
-            <SelectValue placeholder="All Parties" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All Parties</SelectItem>
-            {customers.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>
-                {c.name}
-                {c.party_type === 'WALK_IN' ? ' (Walk-in)' : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Create section - inline in the page body, no dialog */}
+      <section className="space-y-4 rounded-lg border bg-card p-4">
+        <div>
+          <h2 className="text-lg font-semibold">New Sales Return</h2>
+          <p className="text-sm text-muted-foreground">
+            Pick the customer, add completed sales, and add items inside each sale.
+          </p>
+        </div>
 
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Return #</TableHead>
-              <TableHead>Party</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead className="text-right">Items</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead className="w-16 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading &&
-              Array.from({ length: 4 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={6}>
-                    <Skeleton className="h-6 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {!isLoading && items.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="py-8 text-center text-sm text-muted-foreground"
-                >
-                  No sales returns found.
-                </TableCell>
-              </TableRow>
-            )}
-            {!isLoading &&
-              items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">
-                    {item.id.slice(0, 8).toUpperCase()}
-                  </TableCell>
-                  <TableCell>{partyName(item.party_id)}</TableCell>
-                  <TableCell>{item.return_date}</TableCell>
-                  <TableCell className="text-right">{item.lines.length}</TableCell>
-                  <TableCell className="text-right">{money(returnTotal(item))}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => openView(item)}>
-                      <Eye className="h-4 w-4" />
+        <div className="grid max-w-2xl grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label>Customer</Label>
+            <Select value={form.party_id} onValueChange={selectParty}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select customer" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Walk-in (cash refund)</SelectItem>
+                {customers.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
+                    {c.party_type === 'WALK_IN' ? ' (Walk-in)' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sr-date">Return Date</Label>
+            <Input
+              id="sr-date"
+              type="date"
+              value={form.return_date}
+              onChange={(e) => setForm({ ...form, return_date: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {partyChosen && (
+          <>
+            <div className="flex items-end gap-2">
+              <div className="space-y-1">
+                <Label>Add a completed sale to the picker</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={manualRef}
+                    onChange={(e) => setManualRef(e.target.value)}
+                    placeholder="type sale id"
+                    className="w-64"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        lookupSale()
+                      }
+                    }}
+                  />
+                  <Button type="button" variant="secondary" onClick={lookupSale}>
+                    <Search className="h-4 w-4" />
+                    Find
+                  </Button>
+                </div>
+              </div>
+              <p className="pb-2 text-xs text-muted-foreground">
+                {salesLoading
+                  ? 'Loading sales…'
+                  : `${sales.length} completed sale(s) available`}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {blocks.map((block, blockIdx) => (
+                <div key={block.key} className="rounded-lg border p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Sale #{blockIdx + 1}
+                      </span>
+                      <Select
+                        value={block.sale_id}
+                        onValueChange={(v) => setBlockSale(blockIdx, v)}
+                      >
+                        <SelectTrigger className="w-72">
+                          <SelectValue placeholder="Select completed sale" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {salesLoading ? (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              Loading…
+                            </div>
+                          ) : sales.length === 0 ? (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No completed sales for this customer.
+                            </div>
+                          ) : salesUsedElsewhere(blockIdx).size >= sales.length ? (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              All completed sales are already added.
+                            </div>
+                          ) : (
+                            sales
+                              .filter((s) => !salesUsedElsewhere(blockIdx).has(s.id))
+                              .map((s) => (
+                                <SelectItem key={s.id} value={s.id}>
+                                  #{s.id.slice(0, 8).toUpperCase()} · {s.sale_date} ·{' '}
+                                  {money(saleTotal(s))}
+                                </SelectItem>
+                              ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeSaleBlock(blockIdx)}
+                      disabled={blocks.length === 1}
+                    >
+                      <X className="h-4 w-4 text-destructive" />
                     </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-      </div>
+                  </div>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
-          {total === 0 ? 0 : skip + 1}–{Math.min(skip + PAGE_SIZE, total)} of {total}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!canPrev}
-            onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}
-          >
-            Previous
+                  <div className="rounded-lg border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-64">Item</TableHead>
+                          <TableHead className="w-36">Qty to Return</TableHead>
+                          <TableHead className="w-44">Reason</TableHead>
+                          <TableHead className="w-28 text-right">Amount</TableHead>
+                          <TableHead className="w-10" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {block.items.map((item, itemIdx) => {
+                          const sl = saleOf(block.sale_id)?.lines.find(
+                            (l) => l.id === item.sale_line_id,
+                          )
+                          return (
+                            <TableRow key={itemIdx}>
+                              <TableCell>
+                                <Select
+                                  value={item.sale_line_id}
+                                  onValueChange={(v) =>
+                                    updateItem(blockIdx, itemIdx, 'sale_line_id', v)
+                                  }
+                                  disabled={!block.sale_id}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select item" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {saleOf(block.sale_id)?.lines
+                                      .filter((slx) => !itemsUsedInBlock(blockIdx, itemIdx).has(slx.id))
+                                      .map((slx) => (
+                                        <SelectItem key={slx.id} value={slx.id}>
+                                          {variantLabel(slx.variant_id)} · sold {slx.qty} @{' '}
+                                          {money(Number(slx.unit_price))}
+                                        </SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                                {sl && (
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    Price {money(Number(sl.unit_price))} · sold qty {sl.qty} ·
+                                    line total {money(Number(sl.line_total))}
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.001"
+                                  value={item.qty}
+                                  onChange={(e) =>
+                                    updateItem(blockIdx, itemIdx, 'qty', e.target.value)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  value={item.reason}
+                                  placeholder="e.g. damaged, wrong size"
+                                  onChange={(e) =>
+                                    updateItem(blockIdx, itemIdx, 'reason', e.target.value)
+                                  }
+                                />
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {money(itemAmount(block, item))}
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => removeSaleItem(blockIdx, itemIdx)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <div className="mt-2">
+                    {remainingSaleLines(block) > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addSaleItem(blockIdx)}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Another Item
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {availableSales.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-dashed"
+                  onClick={addSaleBlock}
+                >
+                  <FilePlus2 className="h-4 w-4" />
+                  Add Another Sale
+                </Button>
+              )}
+
+              <div className="flex justify-end text-sm">
+                <span className="font-medium">Return Total: {money(formTotal)}</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" onClick={resetEditor} disabled={saving}>
+            Clear
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!canNext}
-            onClick={() => setSkip(skip + PAGE_SIZE)}
-          >
-            Next
+          <span className="w-2" />
+          <Button onClick={handleSave} disabled={saving}>
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+            Record Return
           </Button>
         </div>
-      </div>
-
-      {/* Create dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>New Sales Return</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Party</Label>
-                <Select
-                  value={form.party_id}
-                  onValueChange={(v) => setForm({ ...form, party_id: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Walk-in (cash refund)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">Walk-in (cash refund)</SelectItem>
-                    {customers.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                        {c.party_type === 'WALK_IN' ? ' (Walk-in)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="return-date">Return Date</Label>
-                <Input
-                  id="return-date"
-                  type="date"
-                  value={form.return_date}
-                  onChange={(e) => setForm({ ...form, return_date: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Line Items</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addLine}>
-                  <Plus className="h-4 w-4" />
-                  Add Line
-                </Button>
-              </div>
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Original Sale</TableHead>
-                      <TableHead>Line</TableHead>
-                      <TableHead className="w-24">Qty</TableHead>
-                      <TableHead className="w-28 text-right">Total</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lines.map((l, idx) => {
-                      const sale = selectedSale(idx)
-                      const line = selectedLine(idx)
-                      return (
-                        <TableRow key={idx}>
-                          <TableCell>
-                            <Select
-                              value={l.sale_id}
-                              onValueChange={(v) => updateLine(idx, 'sale_id', v)}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select completed sale" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {salesLoading ? (
-                                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                                    Loading…
-                                  </div>
-                                ) : partySales().length === 0 ? (
-                                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                                    No completed sales for this party.
-                                  </div>
-                                ) : (
-                                  partySales().map((s) => (
-                                    <SelectItem key={s.id} value={s.id}>
-                                      #{s.id.slice(0, 8).toUpperCase()} · {s.sale_date}
-                                    </SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <Select
-                                value={l.sale_line_id}
-                                onValueChange={(v) => updateLine(idx, 'sale_line_id', v)}
-                                disabled={!l.sale_id}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select line" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {sale?.lines.map((sl) => (
-                                    <SelectItem key={sl.id} value={sl.id}>
-                                      {variantLabel(sl.variant_id)} · {money(Number(sl.unit_price))} ·{' '}
-                                      {sl.qty} sold
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              {line && (
-                                <p className="text-xs text-muted-foreground">
-                                  Returnable: {line.qty} @ {money(Number(line.unit_price))} ea
-                                </p>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="0.001"
-                              value={l.qty}
-                              onChange={(e) => updateLine(idx, 'qty', e.target.value)}
-                            />
-                          </TableCell>
-                          <TableCell className="text-right">{money(lineTotal(l))}</TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => removeLine(idx)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-              <div className="flex justify-end text-sm">
-                <span className="font-medium">Total: {money(formTotal)}</span>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              Record Return
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View dialog */}
-      <Dialog open={!!viewing} onOpenChange={(open) => !open && setViewing(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Sales Return {viewing?.id.slice(0, 8).toUpperCase()}</DialogTitle>
-          </DialogHeader>
-          {viewing && (
-            <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                  <p className="text-muted-foreground">Party</p>
-                  <p className="font-medium">{partyName(viewing.party_id)}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Date</p>
-                  <p className="font-medium">{viewing.return_date}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Reason</p>
-                  <p className="font-medium">{viewing.reason || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Total</p>
-                  <p className="font-medium">{money(returnTotal(viewing))}</p>
-                </div>
-              </div>
-              <div className="rounded-lg border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Variant</TableHead>
-                      <TableHead className="text-right">Qty</TableHead>
-                      <TableHead className="text-right">Unit Price</TableHead>
-                      <TableHead className="text-right">Line Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {viewing.lines.map((l) => (
-                      <TableRow key={l.id}>
-                        <TableCell>
-                          {l.variant_name ?? l.variant_id}
-                          {l.variant_sku ? ` (${l.variant_sku})` : ''}
-                        </TableCell>
-                        <TableCell className="text-right">{l.qty}</TableCell>
-                        <TableCell className="text-right">{money(Number(l.unit_price))}</TableCell>
-                        <TableCell className="text-right">{money(Number(l.line_total))}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewing(null)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      </section>
     </div>
   )
 }

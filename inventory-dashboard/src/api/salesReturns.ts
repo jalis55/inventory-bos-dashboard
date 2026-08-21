@@ -4,6 +4,7 @@ import type { SalesReturn, SalesReturnOutPaginate } from '@/types'
 export interface SalesReturnLineInput {
   sale_line_id: string
   qty: number
+  reason?: string
 }
 
 export interface SalesReturnInput {
@@ -18,6 +19,7 @@ export const salesReturnsApi = {
     skip?: number
     limit?: number
     party_id?: number
+    search?: string
   }) => api.get<SalesReturnOutPaginate>('/sales-returns', { params }).then((r) => r.data),
 
   get: (id: string) =>

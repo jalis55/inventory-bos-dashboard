@@ -19,6 +19,7 @@ export const purchaseReturnsApi = {
     skip?: number
     limit?: number
     supplier_id?: number
+    search?: string
   }) => api.get<PurchaseReturnOutPaginate>('/purchase-returns', { params }).then((r) => r.data),
 
   get: (id: string) =>

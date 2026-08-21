@@ -1,4 +1,15 @@
-import type { Party, ProductVariant, Purchase, PurchaseReturn } from '@/types'
+import { printInBrowser } from './print'
+import type {
+  Party,
+  ProductVariant,
+  Purchase,
+  PurchaseReturn,
+  Sale,
+  SaleStatus,
+  SalesReturn,
+} from '@/types'
+
+type PartyKind = 'SUPPLIER' | 'CUSTOMER'
 
 const COMPANY = {
   name: 'Inventor Store',
@@ -14,6 +25,12 @@ const STATUS_LABELS: Record<Purchase['status'], string> = {
   CANCELLED: 'Cancelled',
 }
 
+const SALE_STATUS_LABELS: Record<SaleStatus, string> = {
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+}
+
 const money = (n: number) =>
   n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -24,6 +41,8 @@ const escapeHtml = (value: unknown): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+
+export { COMPANY, money, escapeHtml }
 
 interface InvoiceOptions {
   supplier?: Party
@@ -192,15 +211,7 @@ export function printPurchaseInvoice(
 </body>
 </html>`
 
-  const win = window.open('', '_blank', 'width=960,height=720')
-  if (!win) {
-    window.print()
-    return
-  }
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
-  win.focus()
+  printInBrowser(html)
 }
 
 interface ReturnInvoiceOptions {
@@ -367,13 +378,348 @@ export function printPurchaseReturnInvoice(
 </body>
 </html>`
 
-  const win = window.open('', '_blank', 'width=960,height=720')
-  if (!win) {
-    window.print()
-    return
+  printInBrowser(html)
+}
+
+interface SaleInvoiceOptions {
+  customer: Party | undefined
+  variants: ProductVariant[]
+}
+
+/**
+ * Prints a sales invoice - the customer's copy of a completed (or draft)
+ * sale. Shows the line items, the settlement summary (paid / returned /
+ * balance), and doubles as a receipt for cash sales.
+ */
+export function printSaleInvoice(sale: Sale, { customer, variants }: SaleInvoiceOptions): void {
+  const variantOf = (id: string) => variants.find((v) => v.id === id)
+
+  const ref = sale.id.slice(0, 8).toUpperCase()
+  const total = sale.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
+  const paid = Number(sale.amount_paid ?? 0)
+  const returned = Number(sale.returned_amount ?? 0)
+  const outstanding = total - paid - returned
+
+  const rows = sale.lines
+    .map((line, index) => {
+      const v = variantOf(line.variant_id)
+      const item = v ? `${v.name} (${v.sku})` : line.variant_id.slice(0, 8)
+      return `
+        <tr>
+          <td class="num">${index + 1}</td>
+          <td>
+            <div class="item-name">${escapeHtml(item)}</div>
+            <div class="item-sub">SKU: ${escapeHtml(v?.sku ?? line.variant_id)}</div>
+          </td>
+          <td class="num">${money(Number(line.qty))}</td>
+          <td class="num">${money(Number(line.unit_price))}</td>
+          <td class="num">${money(Number(line.line_total))}</td>
+        </tr>`
+    })
+    .join('')
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sales Invoice ${escapeHtml(ref)}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #f3f4f6; color: #1f2937; font-size: 13px; line-height: 1.5;
   }
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
-  win.focus()
+  .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 14mm 16mm; }
+  @media print {
+    body { background: #fff; }
+    .page { width: auto; min-height: auto; margin: 0; }
+    .toolbar { display: none !important; }
+  }
+  .topbar { height: 6px; background: linear-gradient(90deg, #059669, #34d399); border-radius: 6px 6px 0 0; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; padding: 10mm 0 8mm; border-bottom: 2px solid #e5e7eb; }
+  .brand h1 { font-size: 22px; letter-spacing: 0.5px; color: #059669; }
+  .brand .tagline { color: #6b7280; font-size: 12px; margin-top: 2px; }
+  .brand .address { color: #9ca3af; font-size: 11px; margin-top: 4px; max-width: 60mm; }
+  .doc-title { text-align: right; }
+  .doc-title h2 { font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #111827; }
+  .doc-title .status { display: inline-block; margin-top: 6px; padding: 3px 12px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .status.draft { background: #fef3c7; color: #92400e; }
+  .status.completed { background: #dcfce7; color: #166534; }
+  .status.cancelled { background: #fee2e2; color: #991b1b; }
+  .meta { display: flex; justify-content: space-between; gap: 24px; padding: 8mm 0; }
+  .meta h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #9ca3af; margin-bottom: 4px; }
+  .meta .value { font-weight: 600; }
+  .meta .block { min-width: 0; }
+  .meta .aside { text-align: right; }
+  .meta .aside .item { margin-top: 6px; }
+  .meta .aside .item .k { color: #6b7280; display: inline-block; width: 34mm; text-align: right; margin-right: 8px; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+  table.items thead th {
+    background: #059669; color: #fff; text-align: left; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.8px; padding: 9px 10px;
+  }
+  table.items thead th.num, table.items tbody td.num { text-align: right; }
+  table.items tbody td { padding: 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  table.items tbody tr:nth-child(even) { background: #f9fafb; }
+  .item-name { font-weight: 600; }
+  .item-sub { color: #9ca3af; font-size: 11px; }
+  .totals { display: flex; justify-content: flex-end; margin-top: 8mm; }
+  .totals .inner { width: 64mm; }
+  .totals .row { display: flex; justify-content: space-between; padding: 5px 0; }
+  .totals .row.total { border-top: 2px solid #111827; margin-top: 4px; padding-top: 10px; font-size: 15px; font-weight: 700; }
+  .totals .row.dues { color: #dc2626; }
+  .totals .row.credit { color: #059669; }
+  .totals .num { font-variant-numeric: tabular-nums; }
+  footer { margin-top: 14mm; border-top: 1px solid #e5e7eb; padding-top: 6mm; display: flex; justify-content: space-between; gap: 24px; color: #6b7280; font-size: 11px; }
+  .toolbar { text-align: center; padding: 18px; }
+  .toolbar button {
+    font: inherit; padding: 10px 22px; border: none; border-radius: 8px;
+    background: #059669; color: #fff; font-weight: 600; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar"></div>
+    <header>
+      <div class="brand">
+        <h1>${escapeHtml(COMPANY.name)}</h1>
+        <div class="tagline">${escapeHtml(COMPANY.tagline)}</div>
+        <div class="address">${escapeHtml(COMPANY.address)}</div>
+        <div class="address">${escapeHtml(COMPANY.phone)} · ${escapeHtml(COMPANY.email)}</div>
+      </div>
+      <div class="doc-title">
+        <h2>Sales Invoice</h2>
+        <div>
+          <span class="status ${sale.status.toLowerCase()}">${SALE_STATUS_LABELS[sale.status]}</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="meta">
+      <div class="block">
+        <h4>Bill To (Customer)</h4>
+        <div class="value">${escapeHtml(customer?.name ?? (sale.party_id == null ? 'Walk-in Customer' : `Customer #${sale.party_id}`))}</div>
+        ${customer?.phone ? `<div>${escapeHtml(customer.phone)}</div>` : ''}
+        ${customer?.email ? `<div>${escapeHtml(customer.email)}</div>` : ''}
+        ${customer?.address ? `<div>${escapeHtml(customer.address)}</div>` : ''}
+      </div>
+      <div class="aside">
+        <div class="item"><span class="k">Invoice No.</span><span class="value">${escapeHtml(ref)}</span></div>
+        <div class="item"><span class="k">Date</span><span class="value">${escapeHtml(sale.sale_date)}</span></div>
+        <div class="item"><span class="k">Total Items</span><span class="value">${sale.lines.length}</span></div>
+      </div>
+    </section>
+
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="width:8%">#</th>
+          <th>Item</th>
+          <th class="num" style="width:12%">Qty</th>
+          <th class="num" style="width:15%">Unit Price</th>
+          <th class="num" style="width:18%">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="totals">
+      <div class="inner">
+        <div class="row"><span>Subtotal</span><span class="num">${money(total)}</span></div>
+        <div class="row"><span>Paid Yet</span><span class="num">${money(paid)}</span></div>
+        <div class="row"><span>Adjusted (Returns)</span><span class="num">${money(returned)}</span></div>
+        <div class="row total ${outstanding < 0 ? 'credit' : 'dues'}">
+          <span>${outstanding < 0 ? 'Credit to Customer' : 'Balance Due'}</span>
+          <span class="num">${money(Math.abs(outstanding))}</span>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div>
+        <div><strong>Thank you for your purchase!</strong></div>
+        <div>This document confirms the sale recorded above.</div>
+      </div>
+      <div>
+        <div><strong>Sale Invoice</strong></div>
+        <div>Generated ${escapeHtml(new Date().toLocaleString())} · ${escapeHtml(COMPANY.name)}</div>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toolbar">
+    <button onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <script>
+    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 250); });
+  </script>
+</body>
+</html>`
+
+  printInBrowser(html)
+}
+
+interface SalesReturnInvoiceOptions {
+  customer?: Party
+}
+
+/**
+ * Prints a sales return / credit note - the customer's copy of a return
+ * document. Mirrors printPurchaseReturnInvoice but for the sales side.
+ */
+export function printSalesReturnInvoice(
+  salesReturn: SalesReturn,
+  { customer }: SalesReturnInvoiceOptions,
+): void {
+  const ref = salesReturn.id.slice(0, 8).toUpperCase()
+  const total = salesReturn.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
+
+  const rows = salesReturn.lines
+    .map((line, index) => {
+      const vName = line.variant_name ?? line.variant_id
+      const vSku = line.variant_sku ? ` (${line.variant_sku})` : ''
+      return `
+        <tr>
+          <td class="num">${index + 1}</td>
+          <td>
+            <div class="item-name">${escapeHtml(vName)}${escapeHtml(vSku)}</div>
+            ${line.reason ? `<div class="item-sub">Reason: ${escapeHtml(line.reason)}</div>` : ''}
+          </td>
+          <td class="num">${money(Number(line.qty))}</td>
+          <td class="num">${money(Number(line.unit_price))}</td>
+          <td class="num">${money(Number(line.line_total))}</td>
+        </tr>`
+    })
+    .join('')
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sales Return ${escapeHtml(ref)}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #f3f4f6; color: #1f2937; font-size: 13px; line-height: 1.5;
+  }
+  .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 14mm 16mm; }
+  @media print {
+    body { background: #fff; }
+    .page { width: auto; min-height: auto; margin: 0; }
+    .toolbar { display: none !important; }
+  }
+  .topbar { height: 6px; background: linear-gradient(90deg, #dc2626, #f87171); border-radius: 6px 6px 0 0; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; padding: 10mm 0 8mm; border-bottom: 2px solid #e5e7eb; }
+  .brand h1 { font-size: 22px; letter-spacing: 0.5px; color: #dc2626; }
+  .brand .tagline { color: #6b7280; font-size: 12px; margin-top: 2px; }
+  .brand .address { color: #9ca3af; font-size: 11px; margin-top: 4px; max-width: 60mm; }
+  .doc-title { text-align: right; }
+  .doc-title h2 { font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #111827; }
+  .meta { display: flex; justify-content: space-between; gap: 24px; padding: 8mm 0; }
+  .meta h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #9ca3af; margin-bottom: 4px; }
+  .meta .value { font-weight: 600; }
+  .meta .block { min-width: 0; }
+  .meta .aside { text-align: right; }
+  .meta .aside .item { margin-top: 6px; }
+  .meta .aside .item .k { color: #6b7280; display: inline-block; width: 34mm; text-align: right; margin-right: 8px; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+  table.items thead th {
+    background: #dc2626; color: #fff; text-align: left; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.8px; padding: 9px 10px;
+  }
+  table.items thead th.num, table.items tbody td.num { text-align: right; }
+  table.items tbody td { padding: 10px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  table.items tbody tr:nth-child(even) { background: #f9fafb; }
+  .item-name { font-weight: 600; }
+  .item-sub { color: #9ca3af; font-size: 11px; }
+  .totals { display: flex; justify-content: flex-end; margin-top: 8mm; }
+  .totals .inner { width: 64mm; }
+  .totals .row { display: flex; justify-content: space-between; padding: 5px 0; }
+  .totals .row.total { border-top: 2px solid #111827; margin-top: 4px; padding-top: 10px; font-size: 15px; font-weight: 700; }
+  .totals .num { font-variant-numeric: tabular-nums; }
+  footer { margin-top: 14mm; border-top: 1px solid #e5e7eb; padding-top: 6mm; display: flex; justify-content: space-between; gap: 24px; color: #6b7280; font-size: 11px; }
+  .toolbar { text-align: center; padding: 18px; }
+  .toolbar button {
+    font: inherit; padding: 10px 22px; border: none; border-radius: 8px;
+    background: #dc2626; color: #fff; font-weight: 600; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar"></div>
+    <header>
+      <div class="brand">
+        <h1>${escapeHtml(COMPANY.name)}</h1>
+        <div class="tagline">${escapeHtml(COMPANY.tagline)}</div>
+        <div class="address">${escapeHtml(COMPANY.address)}</div>
+        <div class="address">${escapeHtml(COMPANY.phone)} · ${escapeHtml(COMPANY.email)}</div>
+      </div>
+      <div class="doc-title">
+        <h2>Credit Note</h2>
+        <div style="color:#6b7280;font-size:12px;margin-top:4px;">Sales Return</div>
+      </div>
+    </header>
+
+    <section class="meta">
+      <div class="block">
+        <h4>Credit To (Customer)</h4>
+        <div class="value">${escapeHtml(customer?.name ?? (salesReturn.party_id == null ? 'Walk-in Customer' : `Customer #${salesReturn.party_id}`))}</div>
+        ${customer?.phone ? `<div>${escapeHtml(customer.phone)}</div>` : ''}
+        ${customer?.email ? `<div>${escapeHtml(customer.email)}</div>` : ''}
+        ${customer?.address ? `<div>${escapeHtml(customer.address)}</div>` : ''}
+      </div>
+      <div class="aside">
+        <div class="item"><span class="k">Return No.</span><span class="value">${escapeHtml(ref)}</span></div>
+        <div class="item"><span class="k">Date</span><span class="value">${escapeHtml(salesReturn.return_date)}</span></div>
+        <div class="item"><span class="k">Total Items</span><span class="value">${salesReturn.lines.length}</span></div>
+      </div>
+    </section>
+
+    <table class="items">
+      <thead>
+        <tr>
+          <th style="width:8%">#</th>
+          <th>Item</th>
+          <th class="num" style="width:12%">Qty</th>
+          <th class="num" style="width:15%">Unit Price</th>
+          <th class="num" style="width:18%">Amount</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    <div class="totals">
+      <div class="inner">
+        <div class="row"><span>Subtotal</span><span class="num">${money(total)}</span></div>
+        <div class="row total"><span>Credit Total</span><span class="num">${money(total)}</span></div>
+      </div>
+    </div>
+
+    <footer>
+      <div>
+        <div><strong>Return Reason</strong></div>
+        <div>Recorded per item above. This credit adjusts the customer's balance or triggers a refund.</div>
+      </div>
+      <div>
+        <div><strong>Thank you!</strong></div>
+        <div>Generated ${escapeHtml(new Date().toLocaleString())} · ${escapeHtml(COMPANY.name)}</div>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toolbar">
+    <button onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <script>
+    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 250); });
+  </script>
+</body>
+</html>`
+
+  printInBrowser(html)
 }

@@ -1,25 +1,18 @@
 # Inventory BOS — Admin Dashboard
 
-A React + TypeScript dashboard for the [`inventory-bos`](https://github.com/jalis55/inventory-bos) FastAPI backend.
-Built with **Vite, Tailwind CSS, shadcn/ui (Radix primitives)**, **React Router**, and **Axios**.
+A React + TypeScript dashboard for the [`inventory-bos`](https://github.com/jalis55/inventory-bos) FastAPI backend — a computer-accessories inventory & accounts system. Built with **Vite, Tailwind CSS, shadcn/ui (Radix primitives)**, **React Router**, and **Axios**.
 
 ## Highlights
 
-- **Cookie-based auth**, matched to the backend: the API sets httpOnly `access_token` /
-  `refresh_token` cookies. The frontend never touches tokens directly — it can't, and shouldn't.
-- **Axios interceptor with automatic refresh + request queueing** (`src/lib/axios.ts`): on any
-  401 (except from `/auth/login|refresh|logout` themselves), it calls `POST /auth/refresh` once,
-  queues any other requests that 401'd while the refresh was in flight, then retries them all.
-  If refresh itself fails, it fires a `session-expired` event that logs the user out client-side.
-- **Route protection** (`src/components/auth/ProtectedRoute.tsx`): blocks rendering until the
-  initial `/auth/me` session check resolves, redirects unauthenticated users to `/login`
-  (preserving where they were headed), and redirects users without the right role to
-  `/unauthorized`.
-- **RBAC config** (`src/config/rbac.ts`): a single source of truth for permissions mirroring the
-  backend's roles (`super_admin`, `admin`, `store_keeper`, `seller`), used to filter sidebar nav,
-  guard whole routes, and hide/show inline actions (`<RequirePermission>`) — e.g. only
-  admin/super_admin see Create/Edit/Delete buttons on inventory pages, and only they can reach
-  `/users` at all.
+- **Cookie-based auth** — the backend owns `access_token` / `refresh_token` **httpOnly** cookies; the frontend never touches tokens directly.
+- **Automatic refresh + request queueing** (`src/lib/axios.ts`) — on a 401 the interceptor calls `POST /auth/refresh` once, queues concurrent 401s, retries them, and logs the user out client-side only if the refresh itself fails.
+- **Route protection & RBAC** (`src/components/auth/ProtectedRoute.tsx`, `src/config/rbac.ts`) — sidebar nav, routes, and inline actions are filtered by role (`super_admin`, `admin`, `store_keeper`, `seller`).
+- **Grouped sidebar** — Dashboard · **Product Setup** (Products, Categories, Brands, Product Variants) · Parties, Party Ledger, Payments · **Trade** (Purchases, Purchase Returns, Sales, Sales Returns) · **Reports** (Invoice Ledger, Purchase Returns, Sales Returns report) · Stock Movements, Users.
+- **Invoice-wise payments** — pick a supplier/customer, switch between **Pay** and **Receive Refund / Refund Customers** modes, check invoices, set the amount (pre-filled at due, capped), and confirm — one payment per invoice, then an in-page Money Receipt / Payment Voucher / Refund Voucher prints.
+- **In-page printing** — purchase invoices, credit notes, payment receipts and the invoice-ledger statement all render into a hidden container and print via `window.print()` (`src/utils/print.ts`) — no pop-up tabs.
+- **Sales dialog shows only in-stock variants** — the variant picker lists items with `qty_in_stock > 0`, labeled with live stock.
+- **Return editors** — Purchase Returns and Sales Returns share the same inline multi-invoice (block) flow: pick a party, add invoices/sales to the picker (manual id search), add items with **per-line reasons**, then **Record Return** auto-prints the credit note.
+- **Lazy-loaded routes / code-splitting** — every page is a `React.lazy` chunk (`src/App.tsx`).
 
 ## Project structure
 
@@ -28,48 +21,49 @@ src/
 ├── api/            # one file per REST resource, thin wrappers over axios
 ├── components/
 │   ├── auth/        ProtectedRoute, RequirePermission
-│   ├── layout/       Sidebar (role-filtered nav), Topbar, DashboardLayout
-│   ├── common/        SimpleResourceManager (generic CRUD table+dialog for
-│   │                   categories/companies/variants), PageHeader, ConfirmDialog...
+│   ├── layout/       Sidebar (grouped, role-filtered, collapsible), Topbar, DashboardLayout
+│   ├── common/        PageHeader, PageLoader, StatusBadge, ConfirmDialog, ...
+│   ├── reports/       ReturnReport (shared searchable returns page)
 │   └── ui/           shadcn/ui primitives (button, dialog, select, table, ...)
-├── config/          rbac.ts, nav.ts
+├── config/          rbac.ts (permission map), nav.ts (sidebar groups)
 ├── contexts/        AuthContext — session state, login/logout, silent /auth/me check
-├── lib/             axios.ts (the interceptor), utils.ts (cn helper)
-├── pages/           LoginPage, DashboardHome, ProductsPage, CategoriesPage,
-│                    CompaniesPage, ProductVariantsPage, UsersPage, AccountPage,
-│                    UnauthorizedPage, NotFoundPage
-└── types/           shared TS interfaces matching the API schemas
+├── lib/             axios.ts (interceptor), utils.ts (cn)
+├── pages/           one file per route/page (Dashboard, Products, Categories,
+│                    Brands, ProductVariants, Parties, PartyLedger, Payments,
+│                    Purchases, PurchaseReturns, Sales, SalesReturns,
+│                    StockMovements, InvoiceLedger, PurchaseReturnsReport,
+│                    SalesReturnsReport, Users, Account, Login, ...)
+├── types/           shared TS interfaces matching the API schemas
+└── utils/           invoice.ts, receipt.ts, ledgerDocument.ts (printers),
+                     print.ts (in-page print helper)
 ```
 
 ## Getting started
 
-### 1. Backend prerequisites
+### 1. Backend
 
-Run `inventory-bos` first (see its own README). Two things to double-check on the backend for
-cookie auth to work cross-origin in dev:
+Run `inventory-bos` first (see its README). For cookie auth in dev, the backend must allow your origin **with credentials** in `app/main.py`:
 
-- CORS must allow your frontend origin **with credentials**, e.g. in `app/main.py`:
-  ```python
-  app.add_middleware(
-      CORSMiddleware,
-      allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-      allow_credentials=True,
-      allow_methods=["*"],
-      allow_headers=["*"],
-  )
-  ```
-  `allow_origins=["*"]` will NOT work together with credentialed cookies — browsers reject it.
-- Keep `COOKIE_SECURE=False` for local HTTP dev; set it to `True` behind HTTPS in production.
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
 
-### 2. Install & configure the dashboard
+`COOKIE_SECURE=False` for local HTTP; `True` behind HTTPS.
+
+### 2. Install & run
 
 ```bash
 npm install
-cp .env.example .env   # set VITE_API_URL if your API isn't on 127.0.0.1:8000
 npm run dev
 ```
 
-Open http://localhost:5173. Log in with the super admin created via
+Open http://localhost:5173 and log in with the super admin created via
 `python -m app.scripts.create_super_admin` on the backend.
 
 ### 3. Build
@@ -79,30 +73,27 @@ npm run build
 npm run preview
 ```
 
-## How the auth flow works end-to-end
+## How auth works end-to-end
 
-1. **App load** — `AuthContext` calls `GET /auth/me` once. If the browser is holding a valid
-   `access_token` cookie, this succeeds silently and the user is considered logged in — no
-   flash of the login page.
-2. **Login** — `POST /auth/login` sets both cookies, then `GET /auth/me` populates the user in
-   context.
-3. **Every subsequent API call** goes through the shared `api` axios instance
-   (`withCredentials: true`), so cookies ride along automatically.
-4. **Access token expires (15 min default)** — the next request 401s. The interceptor catches it,
-   calls `POST /auth/refresh` (sends the refresh cookie, gets fresh cookies back), then retries
-   the original request. The caller never sees the 401.
-5. **Refresh token expires or is invalid (7 days default, or after logout elsewhere)** — the
-   refresh call itself 401s. The interceptor gives up, dispatches a `session-expired` event,
-   `AuthContext` clears the user, and `ProtectedRoute` redirects to `/login`.
-6. **Logout** — `POST /auth/logout` clears both cookies server-side; context clears client-side.
+1. **App load** — `AuthContext` calls `GET /auth/me` once; a valid access cookie means no login flash.
+2. **Login** — `POST /auth/login` sets both cookies; `/auth/me` populates the user.
+3. **Every call** goes through the shared `api` axios instance (`withCredentials: true`).
+4. **Access token expires** — the next request 401s; the interceptor refreshes once and retries transparently.
+5. **Refresh fails / expired** — a `session-expired` event clears the user and `ProtectedRoute` redirects to `/login`.
+6. **Logout** — `POST /auth/logout` clears cookies; context clears client-side.
 
-## Roles reference
+## Roles & permissions
 
-| Role | Sidebar / routes | Inventory CRUD | Users |
-|---|---|---|---|
-| `seller` / `store_keeper` | Dashboard, Products, Categories, Companies, Variants | read-only | no access |
-| `admin` | + Users | full CRUD | create/edit store_keeper & seller |
-| `super_admin` | + Users | full CRUD | create/edit any role except super_admin |
+Defined once in `src/config/rbac.ts` and mirrored from the backend (`app/api/deps.py`):
 
-Adjust `src/config/rbac.ts` if the backend's role rules ever change — it's the only place UI
-permissions are defined.
+| Role           | Highlights                                                 |
+| -------------- | ---------------------------------------------------------- |
+| `seller` / `store_keeper` | View inventory/dashboard/stock; create sales; no master-data or user mgmt |
+| `admin` / `super_admin`  | Full CRUD on master data, payments, returns; manage users   |
+
+Dashboards pages for admin use; `payments:view` is read-only for sellers, `payments:manage` is manager-only.
+
+## Common flows
+
+- **Purchase → sell → return cycle.** Receive a purchase to create stock, sell via FIFO, take a customer return (restocks the same batch), and return goods to the supplier (only lines still in stock) — the Invoice Ledger report shows the full debit/credit story per invoice end to end.
+- **Reports.** `Reports → Invoice Ledger` accepts one invoice number (reference or id) for a statement, or a supplier/customer id for their whole invoice-wise ledger. `Reports → Purchase Returns` / `Sales Returns` search by party id / name / email / phone and load data **only when you search**, with per-row print.

@@ -25,579 +25,475 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/common/PageHeader'
-import { RequirePermission } from '@/components/auth/RequirePermission'
 import { paymentsApi } from '@/api/payments'
-import { partiesApi } from '@/api/parties'
+import { purchasesApi } from '@/api/purchases'
 import { salesApi } from '@/api/sales'
+import { partiesApi } from '@/api/parties'
+import { printPaymentReceipt } from '@/utils/receipt'
 import { getApiErrorMessage } from '@/lib/axios'
-import type { Payment, PaymentDirection, Party, Sale } from '@/types'
-import { Plus, Eye, Loader2 } from 'lucide-react'
+import type { PaymentDirection, Party } from '@/types'
+import { CheckCircle2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-const PAGE_SIZE = 10
+type PartyKind = 'SUPPLIER' | 'CUSTOMER'
+type Mode = 'PAY' | 'REFUND'
 
-const PAYMENT_METHODS = ['cash', 'bkash', 'bank_transfer', 'card', 'check'] as const
-
-interface DirectionMeta {
-  label: string
-  short: string
-  color: string
-  partyKind: 'SUPPLIER' | 'CUSTOMER' | 'NONE'
-  allowsWalkIn: boolean
-  hint: string
+interface InvoiceRow {
+  id: string
+  ref: string
+  date: string
+  total: number
+  paid: number
+  returned: number
+  due: number // signed: negative = the supplier owes YOU a credit
 }
 
-const DIRECTION_META: Record<PaymentDirection, DirectionMeta> = {
-  PAID_TO_SUPPLIER: {
-    label: 'Payment to Supplier',
-    short: 'To Supplier',
-    color: 'bg-red-100 text-red-800',
-    partyKind: 'SUPPLIER',
-    allowsWalkIn: false,
-    hint: 'Reduces what you owe this supplier (ledger debit).',
-  },
-  RECEIVED_FROM_CUSTOMER: {
-    label: 'Received from Customer',
-    short: 'From Customer',
-    color: 'bg-green-100 text-green-800',
-    partyKind: 'CUSTOMER',
-    allowsWalkIn: false,
-    hint: 'Reduces what this customer owes you (ledger credit).',
-  },
-  REFUND_FROM_SUPPLIER: {
-    label: 'Refund from Supplier',
-    short: 'Supplier Refund',
-    color: 'bg-emerald-100 text-emerald-800',
-    partyKind: 'SUPPLIER',
-    allowsWalkIn: false,
-    hint: 'Supplier pays off what they owed you (ledger credit).',
-  },
-  REFUND_TO_CUSTOMER: {
-    label: 'Refund to Customer',
-    short: 'Customer Refund',
-    color: 'bg-amber-100 text-amber-800',
-    partyKind: 'CUSTOMER',
-    allowsWalkIn: true,
-    hint: 'Refund issued to a customer — ledger debit, or a straight cash-out for walk-ins (no ledger entry).',
-  },
-}
-
-const emptyForm = {
-  direction: '' as PaymentDirection | '',
-  party_id: '',
-  sale_id: '',
-  amount: '',
-  method: '',
-  payment_date: '',
-  reference_no: '',
-  notes: '',
-}
+const money = (n: number) =>
+  n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 export default function PaymentsPage() {
-  const [items, setItems] = useState<Payment[]>([])
-  const [total, setTotal] = useState(0)
-  const [skip, setSkip] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
+  const [partyType, setPartyType] = useState<PartyKind | ''>('')
+  const [partyId, setPartyId] = useState('')
+  const [mode, setMode] = useState<Mode>('PAY')
 
-  const [directionFilter, setDirectionFilter] = useState<string>('ALL')
-  const [partyFilter, setPartyFilter] = useState<string>('ALL')
+  const [parties, setParties] = useState<Party[]>([])
+  const [rows, setRows] = useState<InvoiceRow[]>([])
+  const [amounts, setAmounts] = useState<Record<string, string>>({})
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+  const [invLoading, setInvLoading] = useState(false)
 
-  const [suppliers, setSuppliers] = useState<Party[]>([])
-  const [customers, setCustomers] = useState<Party[]>([])
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmState, setConfirmState] = useState({
+    method: 'cash',
+    date: new Date().toISOString().slice(0, 10),
+  })
+  const [paying, setPaying] = useState(false)
 
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState(emptyForm)
-  const [saving, setSaving] = useState(false)
+  const selectedParty = parties.find((p) => String(p.id) === partyId)
 
-  const [customerSales, setCustomerSales] = useState<Sale[]>([])
-  const [salesLoading, setSalesLoading] = useState(false)
-
-  const [viewing, setViewing] = useState<Payment | null>(null)
-
-  const load = useCallback(async () => {
-    setIsLoading(true)
+  const loadParties = useCallback(async (type: PartyKind) => {
     try {
-      const params: Record<string, unknown> = { skip, limit: PAGE_SIZE }
-      if (directionFilter !== 'ALL') params.direction = directionFilter
-      if (partyFilter !== 'ALL') params.party_id = Number(partyFilter)
-      const res = await paymentsApi.list(params)
-      setItems(res.items)
-      setTotal(res.total)
-    } catch (err) {
-      toast.error(getApiErrorMessage(err))
-    } finally {
-      setIsLoading(false)
-    }
-  }, [skip, directionFilter, partyFilter])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const loadCatalog = useCallback(async () => {
-    try {
-      const [sup, cust, walk] = await Promise.all([
-        partiesApi.list({ limit: 200, is_active: true, party_type: 'SUPPLIER' }),
-        partiesApi.list({ limit: 200, is_active: true, party_type: 'CUSTOMER' }),
-        partiesApi.list({ limit: 200, is_active: true, party_type: 'WALK_IN' }),
-      ])
-      setSuppliers(sup.items)
-      setCustomers([...cust.items, ...walk.items])
+      const res = await partiesApi.list({
+        limit: 200,
+        is_active: true,
+        party_type: type,
+      })
+      setParties(res.items)
     } catch {
-      // filters still work, just without names
+      setParties([])
     }
   }, [])
 
-  useEffect(() => {
-    loadCatalog()
-  }, [loadCatalog])
+  const changeType = (value: string) => {
+    setPartyType(value as PartyKind)
+    setPartyId('')
+    setMode('PAY')
+    setRows([])
+    setAmounts({})
+    setCheckedIds(new Set())
+    if (value) loadParties(value as PartyKind)
+  }
 
-  const partyName = (id?: number) =>
-    id == null
-      ? 'Walk-in'
-      : (suppliers.find((s) => s.id === id)?.name ??
-        customers.find((c) => c.id === id)?.name ??
-        `#${id}`)
-
-  const saleTotal = (sale: Sale) =>
-    sale.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
-
-  const saleOutstanding = (sale: Sale) =>
-    saleTotal(sale) - Number(sale.amount_paid) - Number(sale.returned_amount ?? 0)
-
-  // For a customer receipt, offer that customer's completed sales that
-  // still have an unpaid balance; for a customer refund, offer the ones
-  // carrying a credit. Either way the payment is tied to a specific order
-  // (per-order tracking, not just on-account).
-  useEffect(() => {
-    if (form.party_id) {
-      setSalesLoading(true)
-      setCustomerSales([])
-      salesApi
-        .list({ status: 'COMPLETED', party_id: Number(form.party_id), limit: 200 })
-        .then((res) => {
-          const items = res.items.filter((s) => {
-            const n = saleOutstanding(s)
-            return form.direction === 'REFUND_TO_CUSTOMER' ? n < 0 : n > 0
-          })
-          setCustomerSales(items)
+  const loadInvoices = useCallback(async (kind: PartyKind, partyIdNum: number, mode: Mode) => {
+    setInvLoading(true)
+    try {
+      if (kind === 'SUPPLIER') {
+        const res = await purchasesApi.list({
+          supplier_id: partyIdNum,
+          status: 'RECEIVED',
+          limit: 200,
         })
-        .catch(() => setCustomerSales([]))
-        .finally(() => setSalesLoading(false))
-    } else {
-      setCustomerSales([])
-    }
-    setForm((f) => ({ ...f, sale_id: '' }))
-  }, [form.direction, form.party_id])
-
-  const openCreate = () => {
-    setForm({
-      direction: '',
-      party_id: '',
-      sale_id: '',
-      amount: '',
-      method: '',
-      payment_date: new Date().toISOString().slice(0, 10),
-      reference_no: '',
-      notes: '',
-    })
-    setCustomerSales([])
-    setDialogOpen(true)
-  }
-
-  const openView = async (item: Payment) => {
-    try {
-      const fresh = await paymentsApi.get(item.id)
-      setViewing(fresh)
+        const built = res.items
+          .map((p) => {
+            const total = p.lines.reduce((s, l) => s + Number(l.line_total), 0)
+            const paid = Number(p.amount_paid ?? 0)
+            return {
+              id: p.id,
+              ref: p.reference_no ?? p.id.slice(0, 8),
+              date: p.purchase_date,
+              total,
+              paid,
+              returned: Number(p.returned_amount ?? 0),
+              due: total - paid - Number(p.returned_amount ?? 0),
+            }
+          })
+          // Pay mode: invoices you still owe. Refund mode: invoices whose
+          // returned goods exceed what was paid - the supplier owes YOU.
+          .filter((r) => (mode === 'REFUND' ? r.due < 0 : r.due > 0))
+        setRows(built)
+        setAmounts({})
+        setCheckedIds(new Set())
+      } else {
+        const res = await salesApi.list({
+          party_id: partyIdNum,
+          status: 'COMPLETED',
+          limit: 200,
+        })
+        const built = res.items
+          .map((s) => {
+            const total = s.lines.reduce((sum, l) => sum + Number(l.line_total), 0)
+            const paid = Number(s.amount_paid ?? 0)
+            const returned = Number(s.returned_amount ?? 0)
+            return {
+              id: s.id,
+              ref: s.id.slice(0, 8),
+              date: s.sale_date,
+              total,
+              paid,
+              returned,
+              due: total - paid - returned,
+            }
+          })
+          // Receive mode: orders still owed to you. Refund mode: returns
+          // exceeded what was paid - YOU owe the customer a credit.
+          .filter((r) => (mode === 'REFUND' ? r.due < 0 : r.due > 0))
+        setRows(built)
+        setAmounts({})
+        setCheckedIds(new Set())
+      }
     } catch (err) {
+      setRows([])
       toast.error(getApiErrorMessage(err))
+    } finally {
+      setInvLoading(false)
     }
+  }, [])
+
+  const selectParty = (value: string) => {
+    setPartyId(value)
+    setRows([])
+    setAmounts({})
+    setCheckedIds(new Set())
+    if (value && partyType) loadInvoices(partyType, Number(value), mode)
   }
 
-  const setDirection = (value: string) => {
-    const d = value as PaymentDirection
-    setForm({ ...form, direction: d, party_id: '', sale_id: '' })
-    setCustomerSales([])
+  const changeMode = (value: string) => {
+    setMode(value as Mode)
+    setRows([])
+    setAmounts({})
+    setCheckedIds(new Set())
+    if (partyId && partyType) loadInvoices(partyType, Number(partyId), value as Mode)
   }
 
-  const selectSale = (value: string) => {
-    const sale = customerSales.find((s) => s.id === value)
-    if (!sale) return
-    const n = saleOutstanding(sale)
-    const amt = form.direction === 'REFUND_TO_CUSTOMER' ? -n : n
-    setForm((f) => ({ ...f, sale_id: value, amount: amt > 0 ? String(amt) : f.amount }))
-  }
-
-  const directionParties = () => {
-    const d = form.direction as PaymentDirection
-    if (!d) return []
-    return DIRECTION_META[d].partyKind === 'SUPPLIER' ? suppliers : customers
-  }
-
-  const directionLabel = (d: PaymentDirection) => DIRECTION_META[d].label
-
-  const handleSave = async () => {
-    const d = form.direction as PaymentDirection
-    if (!d) {
-      toast.error('Payment type is required')
-      return
-    }
-    const meta = DIRECTION_META[d]
-    if (meta.partyKind !== 'NONE' && !form.party_id && !meta.allowsWalkIn) {
-      toast.error(`${meta.partyKind === 'SUPPLIER' ? 'A supplier' : 'A customer'} is required for this payment type`)
-      return
-    }
-    if (!form.amount || Number(form.amount) <= 0) {
-      toast.error('Amount must be greater than 0')
-      return
-    }
-    if (!form.method) {
-      toast.error('Payment method is required')
-      return
-    }
-    if (!form.payment_date) {
-      toast.error('Payment date is required')
-      return
-    }
-
-    setSaving(true)
-    try {
-      await paymentsApi.create({
-        direction: d,
-        party_id: form.party_id ? Number(form.party_id) : undefined,
-        sale_id: form.sale_id || undefined,
-        amount: Number(form.amount),
-        method: form.method,
-        payment_date: form.payment_date,
-        reference_no: form.reference_no.trim() || undefined,
-        notes: form.notes.trim() || undefined,
+  const toggleRow = (id: string) => {
+    if (checkedIds.has(id)) {
+      setCheckedIds((cur) => {
+        const next = new Set(cur)
+        next.delete(id)
+        return next
       })
+      setAmounts((a) => {
+        const next = { ...a }
+        delete next[id]
+        return next
+      })
+    } else {
+      setCheckedIds((cur) => new Set(cur).add(id))
+      const row = rows.find((r) => r.id === id)
+      const defaultAmount = row ? (mode === 'REFUND' ? -row.due : row.due) : ''
+      setAmounts((a) => ({ ...a, [id]: String(defaultAmount) }))
+    }
+  }
+
+  const setRowAmount = (id: string, value: string) => {
+    const row = rows.find((r) => r.id === id)
+    const cap = row ? (mode === 'REFUND' ? -row.due : row.due) : 0
+    const num = Number(value)
+    setAmounts((cur) => ({ ...cur, [id]: value }))
+    if (row && value !== '' && num > cap) {
+      // Never allow more than the cap - snap it back and surface a hint.
+      setAmounts((cur) => ({ ...cur, [id]: String(cap) }))
+    }
+  }
+
+  const selectedAmounts = rows
+      .filter((r) => checkedIds.has(r.id))
+      .map((r) => ({ row: r, amount: Number(amounts[r.id]) || 0 }))
+      .filter((x) => x.amount > 0)
+
+  const totalPayable = selectedAmounts.reduce((s, x) => s + x.amount, 0)
+  const hasPayable = selectedAmounts.length > 0
+
+  const openConfirm = () => {
+    setConfirmState((c) => ({ ...c, date: new Date().toISOString().slice(0, 10) }))
+    setConfirmOpen(true)
+  }
+
+  const handlePay = async () => {
+    if (!partyType || !partyId || selectedAmounts.length === 0) return
+    const isRefund = mode === 'REFUND'
+    const direction: PaymentDirection = isRefund
+      ? partyType === 'SUPPLIER' ? 'REFUND_FROM_SUPPLIER' : 'REFUND_TO_CUSTOMER'
+      : partyType === 'SUPPLIER'
+        ? 'PAID_TO_SUPPLIER'
+        : 'RECEIVED_FROM_CUSTOMER'
+
+    setPaying(true)
+    try {
+      const created: unknown[] = []
+      for (const { row, amount } of selectedAmounts) {
+        const p = await paymentsApi.create({
+          party_id: Number(partyId),
+          direction,
+          amount,
+          method: confirmState.method,
+          payment_date: confirmState.date,
+          ...(partyType === 'SUPPLIER'
+            ? { purchase_id: row.id }
+            : { sale_id: row.id }),
+        })
+        created.push(p)
+      }
       toast.success(
-        form.party_id
-          ? 'Payment recorded — party ledger updated'
-          : 'Walk-in refund recorded',
+        isRefund
+          ? partyType === 'SUPPLIER'
+            ? `${created.length} refund(s) collected from supplier`
+            : `${created.length} refund(s) paid to customer — credit cleared`
+          : partyType === 'SUPPLIER'
+            ? `${created.length} invoice(s) paid — supplier ledger updated`
+            : `${created.length} invoice(s) settled — customer ledger updated`,
       )
-      setDialogOpen(false)
-      load()
+      setConfirmOpen(false)
+      setAmounts({})
+      setCheckedIds(new Set())
+      await loadInvoices(partyType, Number(partyId), mode)
+
+      const receiptRows = selectedAmounts.map(({ row, amount }) => ({
+        ref: row.ref,
+        date: row.date,
+        total: row.total,
+        amountNow: amount,
+      }))
+      printPaymentReceipt(
+        isRefund
+          ? partyType === 'SUPPLIER' ? 'SUPPLIER_REFUND' : 'CUSTOMER_REFUND'
+          : partyType,
+        selectedParty,
+        receiptRows,
+        { method: confirmState.method, date: confirmState.date, total: totalPayable },
+      )
     } catch (err) {
       toast.error(getApiErrorMessage(err))
     } finally {
-      setSaving(false)
+      setPaying(false)
     }
   }
 
-  const money = (n: number) =>
-    n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  const canPrev = skip > 0
-  const canNext = skip + PAGE_SIZE < total
+  const canConfirm = !invLoading && hasPayable
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Payments"
-        description="Pay suppliers, receive from customers, and record refunds — each payment posts to the linked party's ledger."
-        actions={
-          <RequirePermission permission="payments:manage">
-            <Button onClick={openCreate}>
-              <Plus className="h-4 w-4" />
-              Record Payment
-            </Button>
-          </RequirePermission>
-        }
+        description="Pay each supplier invoice or settle each customer sale, invoice by invoice — a receipt prints as your proof."
       />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <Select
-          value={directionFilter}
-          onValueChange={(v) => {
-            setDirectionFilter(v)
-            setSkip(0)
-          }}
-        >
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="All Types" />
+        <Select value={partyType} onValueChange={changeType}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="Supplier or Customer" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All Types</SelectItem>
-            {Object.entries(DIRECTION_META).map(([value, m]) => (
-              <SelectItem key={value} value={value}>
-                {m.label}
+            <SelectItem value="SUPPLIER">Supplier</SelectItem>
+            <SelectItem value="CUSTOMER">Customer</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={partyId} onValueChange={selectParty} disabled={!partyType}>
+          <SelectTrigger className="w-72">
+            <SelectValue placeholder="Select party" />
+          </SelectTrigger>
+          <SelectContent>
+            {parties.length === 0 && (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                No parties of this type.
+              </div>
+            )}
+            {parties.map((p) => (
+              <SelectItem key={p.id} value={String(p.id)}>
+                {p.name}
+                {p.party_type === 'WALK_IN' ? ' (Walk-In)' : ''}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Select
-          value={partyFilter}
-          onValueChange={(v) => {
-            setPartyFilter(v)
-            setSkip(0)
-          }}
-        >
-          <SelectTrigger className="w-64">
-            <SelectValue placeholder="All Parties" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">All Parties</SelectItem>
-            {suppliers.map((s) => (
-              <SelectItem key={`s${s.id}`} value={String(s.id)}>
-                {s.name} (Supplier)
-              </SelectItem>
-            ))}
-            {customers.map((c) => (
-              <SelectItem key={`c${c.id}`} value={String(c.id)}>
-                {c.name}
-                {c.party_type === 'WALK_IN' ? ' (Walk-In)' : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {partyType && (
+          <Select value={mode} onValueChange={changeMode} disabled={!partyId}>
+            <SelectTrigger className="w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {partyType === 'SUPPLIER' ? (
+                <>
+                  <SelectItem value="PAY">Pay Invoices</SelectItem>
+                  <SelectItem value="REFUND">Receive Refunds</SelectItem>
+                </>
+              ) : (
+                <>
+                  <SelectItem value="PAY">Receive Payments</SelectItem>
+                  <SelectItem value="REFUND">Refund Customers</SelectItem>
+                </>
+              )}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       <div className="rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Date</TableHead>
-              <TableHead>Party</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Method</TableHead>
-              <TableHead>Reference</TableHead>
-              <TableHead>Sale</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="w-16 text-right">Actions</TableHead>
+              <TableHead className="w-10" />
+              <TableHead>Invoice ID</TableHead>
+              <TableHead>Invoice Date</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead className="text-right">Paid Yet</TableHead>
+              <TableHead className="text-right" title="Goods returned against this invoice — already adjusted from the due">
+                Adjusted
+              </TableHead>
+              <TableHead className="text-right">{mode === 'REFUND' ? 'Credit' : 'Due'}</TableHead>
+              <TableHead className="w-40 text-right">
+                {mode === 'REFUND' ? 'Refund Amount' : 'Pay / Receive Now'}
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {isLoading &&
+            {!partyType && (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="py-8 text-center text-sm text-muted-foreground"
+                >
+                  Choose a supplier to pay or a customer to receive from.
+                </TableCell>
+              </TableRow>
+            )}
+            {invLoading &&
               Array.from({ length: 4 }).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-6 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
-            {!isLoading && items.length === 0 && (
+            {!invLoading && partyType && rows.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={8}
                   className="py-8 text-center text-sm text-muted-foreground"
                 >
-                  No payments found.
+                  No open {mode === 'REFUND' ? 'credits' : 'invoices'} for this {partyType === 'SUPPLIER' ? 'supplier' : 'customer'}.
                 </TableCell>
               </TableRow>
             )}
-            {!isLoading &&
-              items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="whitespace-nowrap">{item.payment_date}</TableCell>
-                  <TableCell>{partyName(item.party_id)}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={DIRECTION_META[item.direction].color}>
-                      {DIRECTION_META[item.direction].label}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{item.method}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {item.reference_no ?? '—'}
-                  </TableCell>
-                  <TableCell
-                    className={`text-right font-medium ${
-                      item.direction === 'PAID_TO_SUPPLIER' ||
-                      item.direction === 'REFUND_TO_CUSTOMER'
-                        ? 'text-destructive'
-                        : 'text-green-600'
-                    }`}
-                  >
-                    {money(Number(item.amount))}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => openView(item)}>
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+            {!invLoading &&
+              rows.map((row) => {
+                const checked = checkedIds.has(row.id)
+                return (
+                  <TableRow key={row.id}>
+                    <TableCell className="text-center">
+                      <input
+                        type="checkbox"
+                        className="size-4 cursor-pointer accent-primary"
+                        checked={checked}
+                        onChange={() => toggleRow(row.id)}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">#{row.ref}</TableCell>
+                    <TableCell>{row.date}</TableCell>
+                    <TableCell className="text-right">{money(row.total)}</TableCell>
+                    <TableCell className="text-right">{money(row.paid)}</TableCell>
+                    <TableCell className="text-right">{money(row.returned)}</TableCell>
+                    <TableCell className="text-right font-medium">
+                      {money(mode === 'REFUND' ? -row.due : row.due)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {checked ? (
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={amounts[row.id] ?? String(mode === 'REFUND' ? -row.due : row.due)}
+                          onChange={(e) => setRowAmount(row.id, e.target.value)}
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
           </TableBody>
         </Table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
-          {total === 0 ? 0 : skip + 1}–{Math.min(skip + PAGE_SIZE, total)} of {total}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!canPrev}
-            onClick={() => setSkip(Math.max(0, skip - PAGE_SIZE))}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!canNext}
-            onClick={() => setSkip(skip + PAGE_SIZE)}
-          >
-            Next
-          </Button>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {hasPayable
+            ? `${selectedAmounts.length} invoice(s) · total ${mode === 'REFUND' ? 'refundable' : 'payable'} ${money(totalPayable)}`
+            : 'Enter amounts above to pay or receive.'}
+        </p>
+        <Button onClick={openConfirm} disabled={!canConfirm}>
+          <CheckCircle2 className="h-4 w-4" />
+          Confirm &amp; {mode === 'REFUND' ? 'Refund' : 'Pay'}
+        </Button>
       </div>
 
-      {/* Create dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-xl">
+      {/* Confirm dialog */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Record Payment</DialogTitle>
+            <DialogTitle>
+              Confirm {mode === 'REFUND' ? 'Refund' : partyType === 'SUPPLIER' ? 'Payment' : 'Receipt'}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label>Payment Type</Label>
-              <Select value={form.direction} onValueChange={setDirection}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select payment type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(DIRECTION_META).map(([value, m]) => (
-                    <SelectItem key={value} value={value}>
-                      {m.label}
-                    </SelectItem>
+            <p className="text-sm text-muted-foreground">
+              {mode === 'REFUND'
+                ? partyType === 'SUPPLIER' ? 'Collecting refund from' : 'Refunding'
+                : partyType === 'SUPPLIER'
+                  ? 'Paying'
+                  : 'Receiving from'}{' '}
+              <span className="font-medium text-foreground">
+                {selectedParty?.name ?? 'party'}
+              </span>
+            </p>
+            <div className="rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Amount Now</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedAmounts.map(({ row, amount }) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">#{row.ref}</TableCell>
+                      <TableCell>{row.date}</TableCell>
+                      <TableCell className="text-right">{money(row.total)}</TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {money(amount)}
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </SelectContent>
-              </Select>
-              {form.direction && (
-                <p className="text-xs text-muted-foreground">
-                  {DIRECTION_META[form.direction as PaymentDirection].hint}
-                </p>
-              )}
+                </TableBody>
+              </Table>
             </div>
-
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Party</Label>
-                <Select
-                  value={form.party_id}
-                  onValueChange={(v) => setForm({ ...form, party_id: v })}
-                  disabled={!form.direction}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        form.direction && DIRECTION_META[form.direction as PaymentDirection].allowsWalkIn
-                          ? 'Walk-in (no ledger entry)'
-                          : 'Select party'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DIRECTION_META[form.direction as PaymentDirection]?.allowsWalkIn && (
-                      <SelectItem value="">Walk-in</SelectItem>
-                    )}
-                    {directionParties().map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {p.name}
-                        {p.party_type === 'WALK_IN' ? ' (Walk-In)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="payment-date">Payment Date</Label>
-                <Input
-                  id="payment-date"
-                  type="date"
-                  value={form.payment_date}
-                  onChange={(e) => setForm({ ...form, payment_date: e.target.value })}
-                />
-              </div>
-            </div>
-
-            {form.party_id &&
-              (form.direction === 'RECEIVED_FROM_CUSTOMER' ||
-                form.direction === 'REFUND_TO_CUSTOMER') && (
-              <div className="space-y-2">
-                <Label>
-                  {form.direction === 'REFUND_TO_CUSTOMER'
-                    ? 'Refund this Sale Order'
-                    : 'Apply to Sale Order'}
-                </Label>
-                <Select
-                  value={form.sale_id}
-                  onValueChange={selectSale}
-                  disabled={salesLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={
-                        form.direction === 'REFUND_TO_CUSTOMER'
-                          ? 'Select the credited order to refund (optional)'
-                          : 'Select a sale to pay (optional)'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {salesLoading ? (
-                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                        Loading…
-                      </div>
-                    ) : customerSales.length === 0 ? (
-                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                        {form.direction === 'REFUND_TO_CUSTOMER'
-                          ? 'This customer has no credited orders.'
-                          : 'No outstanding completed sales for this customer.'}
-                      </div>
-                    ) : (
-                      customerSales.map((s) => {
-                        const n = saleOutstanding(s)
-                        return (
-                          <SelectItem key={s.id} value={s.id}>
-                            #{s.id.slice(0, 8).toUpperCase()} · {s.sale_date} ·{' '}
-                            {form.direction === 'REFUND_TO_CUSTOMER'
-                              ? `credit ${money(-n)}`
-                              : `due ${money(n)}`}
-                          </SelectItem>
-                        )
-                      })
-                    )}
-                  </SelectContent>
-                </Select>
-                {form.sale_id && (
-                  <p className="text-xs text-muted-foreground">
-                    {form.direction === 'REFUND_TO_CUSTOMER'
-                      ? 'This refund is tracked against this order — it clears that order’s credit.'
-                      : 'This payment is tracked against this order — it reduces that sale’s outstanding, not just the overall balance.'}
-                  </p>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Amount</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                />
-              </div>
               <div className="space-y-2">
                 <Label>Method</Label>
                 <Select
-                  value={form.method}
-                  onValueChange={(v) => setForm({ ...form, method: v })}
+                  value={confirmState.method}
+                  onValueChange={(v) => setConfirmState({ ...confirmState, method: v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select method" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {PAYMENT_METHODS.map((m) => (
+                    {['cash', 'bkash', 'bank_transfer', 'card', 'check'].map((m) => (
                       <SelectItem key={m} value={m}>
                         {m.replace(/_/g, ' ')}
                       </SelectItem>
@@ -605,89 +501,34 @@ export default function PaymentsPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="pay-date">Payment Date</Label>
+                <Input
+                  id="pay-date"
+                  type="date"
+                  value={confirmState.date}
+                  onChange={(e) => setConfirmState({ ...confirmState, date: e.target.value })}
+                />
+              </div>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="payment-ref">Reference #</Label>
-              <Input
-                id="payment-ref"
-                value={form.reference_no}
-                onChange={(e) => setForm({ ...form, reference_no: e.target.value })}
-                placeholder="Optional"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="payment-notes">Notes</Label>
-              <Input
-                id="payment-notes"
-                value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                placeholder="Optional"
-              />
+            <div className="flex justify-end text-sm">
+              <span>
+                Total {mode === 'REFUND'
+                ? 'to Refund'
+                : partyType === 'SUPPLIER'
+                  ? 'to Pay'
+                  : 'to Receive'}:{' '}
+                <span className="text-base font-semibold">{money(totalPayable)}</span>
+              </span>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={paying}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-              Record Payment
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View dialog */}
-      <Dialog open={!!viewing} onOpenChange={(open) => !open && setViewing(null)}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Payment {viewing?.id.slice(0, 8).toUpperCase()}</DialogTitle>
-          </DialogHeader>
-          {viewing && (
-            <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                  <p className="text-muted-foreground">Party</p>
-                  <p className="font-medium">{partyName(viewing.party_id)}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Type</p>
-                  <Badge
-                    variant="outline"
-                    className={DIRECTION_META[viewing.direction].color}
-                  >
-                    {directionLabel(viewing.direction)}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Date</p>
-                  <p className="font-medium">{viewing.payment_date}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Amount</p>
-                  <p className="font-medium">{money(Number(viewing.amount))}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Method</p>
-                  <p className="font-medium">{viewing.method}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Reference #</p>
-                  <p className="font-medium">{viewing.reference_no ?? '—'}</p>
-                </div>
-              </div>
-              <div className="text-sm">
-                <p className="text-muted-foreground">Notes</p>
-                <p className="font-medium">{viewing.notes ?? '—'}</p>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setViewing(null)}>
-              Close
+            <Button onClick={handlePay} disabled={paying}>
+              {paying && <Loader2 className="h-4 w-4 animate-spin" />}
+              Confirm & Print Receipt
             </Button>
           </DialogFooter>
         </DialogContent>

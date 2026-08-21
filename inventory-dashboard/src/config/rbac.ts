@@ -48,6 +48,8 @@ export const PERMISSIONS = {
 
   'payments:view': ALL_ROLES,
   'payments:manage': MANAGER_ROLES, // record payments / refunds (mirrors backend require_superadmin_or_admin)
+
+  'reports:view': ALL_ROLES, // read-only reports (e.g. invoice ledger)
 } as const
 
 export type Permission = keyof typeof PERMISSIONS

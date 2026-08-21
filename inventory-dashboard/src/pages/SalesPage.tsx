@@ -43,6 +43,7 @@ import { paymentsApi } from '@/api/payments'
 import { partiesApi } from '@/api/parties'
 import { productVariantsApi } from '@/api/productVariants'
 import { batchesApi } from '@/api/batches'
+import { printSaleInvoice } from '@/utils/invoice'
 import { getApiErrorMessage } from '@/lib/axios'
 import type { Sale, SaleStatus, Party, ProductVariant, ProductBatch } from '@/types'
 import {
@@ -54,6 +55,7 @@ import {
   Loader2,
   Trash2,
   Banknote,
+  Printer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -184,6 +186,11 @@ export default function SalesPage() {
   // Per-order accounting: outstanding = total - paid - returned.
   const saleOutstanding = (s: Sale) =>
     saleTotal(s) - Number(s.amount_paid) - Number(s.returned_amount ?? 0)
+
+  const printSale = (item: Sale) => {
+    const customer = customers.find((c) => c.id === item.party_id)
+    printSaleInvoice(item, { customer, variants })
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -385,6 +392,12 @@ export default function SalesPage() {
   const selectedBatch = (variantId: string, batchId: string) =>
     variantBatches(variantId).find((b) => b.id === batchId)
 
+  // New sale: only show items that actually have stock. Editing a draft keeps
+  // every option so already-picked (possibly now-out-of-stock) lines stay visible.
+  const pickableVariants = editing
+    ? variants
+    : variants.filter((v) => Number(v.qty_in_stock ?? 0) > 0)
+
   const money = (n: number) =>
     n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -514,6 +527,14 @@ export default function SalesPage() {
                         <Button variant="ghost" size="icon" onClick={() => openView(item)}>
                           <Eye className="h-4 w-4" />
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Print invoice"
+                          onClick={() => printSale(item)}
+                        >
+                          <Printer className="h-4 w-4" />
+                        </Button>
                         <RequirePermission permission="sales:manage">
                           {isDraft && (
                             <>
@@ -596,7 +617,7 @@ export default function SalesPage() {
 
       {/* Create / Edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-5xl">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit Sale' : 'New Sale'}</DialogTitle>
           </DialogHeader>
@@ -653,7 +674,7 @@ export default function SalesPage() {
                     <TableRow>
                       <TableHead>Variant</TableHead>
                       <TableHead className="w-56">Supplier / Batch</TableHead>
-                      <TableHead className="w-24">Qty</TableHead>
+                      <TableHead className="w-32">Qty</TableHead>
                       <TableHead className="w-28">Unit Price</TableHead>
                       <TableHead className="w-28 text-right">Total</TableHead>
                       <TableHead className="w-10" />
@@ -676,12 +697,20 @@ export default function SalesPage() {
                                 <SelectValue placeholder="Select variant" />
                               </SelectTrigger>
                               <SelectContent>
-                                {variants.map((v) => (
-                                  <SelectItem key={v.id} value={v.id}>
-                                    {v.name} ({v.sku})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
+                                  {pickableVariants.length === 0 && !editing && (
+                                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                      No items in stock.
+                                    </div>
+                                  )}
+                                  {pickableVariants.map((v) => (
+                                    <SelectItem key={v.id} value={v.id}>
+                                      {v.name} ({v.sku})
+                                      {!editing && Number(v.qty_in_stock ?? 0) > 0
+                                        ? ` · ${Number(v.qty_in_stock)} in stock`
+                                        : ''}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
                             </Select>
                           </TableCell>
                           <TableCell>

@@ -55,6 +55,7 @@ export default defineConfig({
       '/purchase-returns': apiProxy(),
       '/sales': apiProxy(),
       '/sales-returns': apiProxy(),
+      '/invoice-ledger': apiProxy(),
     },
   },
 })

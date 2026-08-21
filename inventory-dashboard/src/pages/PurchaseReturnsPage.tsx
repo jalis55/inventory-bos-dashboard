@@ -77,13 +77,15 @@ export default function PurchaseReturnsPage() {
     items: [{ ...emptyItem }],
   })
 
-  // Lines of a block's invoice that aren't yet in the block - used to hide
-  // "Add Another Item" when there's nothing left to add.
+  // Lines of a block's invoice that aren't yet in the block AND still have
+  // stock - used to hide "Add Another Item" when there's nothing left to add.
   const remainingInvoiceLines = (block: InvoiceBlock) => {
     const inv = invoiceOf(block.invoice_id)
     if (!inv) return 0
     const used = new Set(block.items.map((it) => it.purchase_line_id))
-    return inv.lines.filter((l) => !used.has(l.id)).length
+    return inv.lines.filter(
+      (l) => !used.has(l.id) && Number(l.qty_remaining ?? 0) > 0,
+    ).length
   }
 
   // Invoices already used by OTHER blocks - so an invoice can't be picked
@@ -299,6 +301,13 @@ export default function PurchaseReturnsPage() {
           toast.error('Each item needs a line and a qty > 0')
           return
         }
+        const pl = invoiceOf(block.invoice_id)?.lines.find(
+          (l) => l.id === it.purchase_line_id,
+        )
+        if (Number(it.qty) > Number(pl?.qty_remaining ?? 0)) {
+          toast.error('Qty cannot exceed the stock on hand (already sold-out stock is not returnable)')
+          return
+        }
         validLines.push({
           purchase_line_id: it.purchase_line_id,
           qty: Number(it.qty),
@@ -484,20 +493,32 @@ export default function PurchaseReturnsPage() {
                                     <SelectValue placeholder="Select item" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {invoiceOf(block.invoice_id)?.lines
-                                      .filter((plx) => !itemsUsedInBlock(blockIdx, itemIdx).has(plx.id))
-                                      .map((plx) => (
-                                        <SelectItem key={plx.id} value={plx.id}>
-                                          {variantLabel(plx.variant_id)} · bought {plx.qty} @{' '}
-                                          {money(Number(plx.unit_cost))}
-                                        </SelectItem>
-                                      ))}
+                                    {invoiceOf(block.invoice_id)?.lines.some(
+                                      (plx) =>
+                                        Number(plx.qty_remaining ?? 0) > 0 &&
+                                        !itemsUsedInBlock(blockIdx, itemIdx).has(plx.id),
+                                    ) ? (
+                                      invoiceOf(block.invoice_id)?.lines
+                                        .filter((plx) => Number(plx.qty_remaining ?? 0) > 0)
+                                        .filter((plx) => !itemsUsedInBlock(blockIdx, itemIdx).has(plx.id))
+                                        .map((plx) => (
+                                          <SelectItem key={plx.id} value={plx.id}>
+                                            {variantLabel(plx.variant_id)} · in stock{' '}
+                                            {money(Number(plx.qty_remaining))} · cost{' '}
+                                            {money(Number(plx.unit_cost))}
+                                          </SelectItem>
+                                        ))
+                                    ) : (
+                                      <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                                        No items in stock.
+                                      </div>
+                                    )}
                                   </SelectContent>
                                 </Select>
                                 {pl && (
                                   <p className="mt-1 text-xs text-muted-foreground">
-                                    Cost {money(Number(pl.unit_cost))} · invoice qty {pl.qty} ·
-                                    line total {money(Number(pl.line_total))}
+                                    In stock {money(Number(pl.qty_remaining ?? 0))} of {pl.qty} bought ·
+                                    cost {money(Number(pl.unit_cost))}
                                   </p>
                                 )}
                               </TableCell>

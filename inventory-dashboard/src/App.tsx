@@ -21,6 +21,9 @@ const PurchaseReturnsPage = lazy(() => import('@/pages/PurchaseReturnsPage'))
 const SalesPage = lazy(() => import('@/pages/SalesPage'))
 const SalesReturnsPage = lazy(() => import('@/pages/SalesReturnsPage'))
 const StockMovementsPage = lazy(() => import('@/pages/StockMovementsPage'))
+const InvoiceLedgerPage = lazy(() => import('@/pages/InvoiceLedgerPage'))
+const PurchaseReturnsReportPage = lazy(() => import('@/pages/PurchaseReturnsReportPage'))
+const SalesReturnsReportPage = lazy(() => import('@/pages/SalesReturnsReportPage'))
 const UsersPage = lazy(() => import('@/pages/UsersPage'))
 const AccountPage = lazy(() => import('@/pages/AccountPage'))
 const UnauthorizedPage = lazy(() => import('@/pages/UnauthorizedPage'))
@@ -51,6 +54,9 @@ export default function App() {
                 <Route path="/sales" element={<SalesPage />} />
                 <Route path="/sales-returns" element={<SalesReturnsPage />} />
                 <Route path="/stock-movements" element={<StockMovementsPage />} />
+                <Route path="/reports/invoice-ledger" element={<InvoiceLedgerPage />} />
+                <Route path="/reports/purchase-returns" element={<PurchaseReturnsReportPage />} />
+                <Route path="/reports/sales-returns" element={<SalesReturnsReportPage />} />
                 <Route path="/account" element={<AccountPage />} />
 
                 {/* admin / super_admin only */}
